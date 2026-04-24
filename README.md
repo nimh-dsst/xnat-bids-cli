@@ -51,8 +51,8 @@ Downloads every file belonging to a single XNAT experiment — all scans (with t
 2. Connects to the stored server via PyXNAT.
 3. Walks `project → subject → experiment`, then iterates scans, their resources, and every file in each resource. Also iterates session-level resources on the experiment itself.
 4. Writes each file to:
-   - `OUTPUT_DIR/EXPERIMENT_ID/scans/<scan_id>/<resource_label>/<filename>` for scan files
-   - `OUTPUT_DIR/EXPERIMENT_ID/resources/<resource_label>/<filename>` for session-level resource files
+   - `OUTPUT_DIR/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID/scans/<scan_id>/<resource_label>/<filename>` for scan files
+   - `OUTPUT_DIR/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID/resources/<resource_label>/<filename>` for session-level resource files
 
 ```bash
 xnatcli download PROJECT_ID SUBJECT_ID EXPERIMENT_ID -o OUTPUT_DIR

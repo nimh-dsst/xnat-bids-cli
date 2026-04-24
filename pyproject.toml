@@ -18,6 +18,8 @@ packages = ["src/xnatcli"]
 
 [dependency-groups]
 dev = [
+    "nibabel>=5.4.2",
+    "pandas>=3.0.2",
     "ruff>=0.15.4",
 ]
 

@@ -46,7 +46,7 @@ def _download_experiment(
             f"(project='{project_id}', subject='{subject_id}') on the configured server."
         )
 
-    experiment_root = output_dir / experiment_id
+    experiment_root = output_dir / project_id / subject_id / experiment_id
     count = 0
 
     for scan in experiment.scans():
@@ -105,5 +105,8 @@ def download_cmd(args: argparse.Namespace) -> int:
             except Exception:
                 pass
 
-    print(f"Downloaded {count} file(s) to {output_dir / args.experiment_id}")
+    print(
+        f"Downloaded {count} file(s) to "
+        f"{output_dir / args.project_id / args.subject_id / args.experiment_id}"
+    )
     return 0
