@@ -51,6 +51,26 @@ def _verify(server: str, username: str, password: str) -> None:
                 pass
 
 
+def load_credentials() -> tuple[str, str, str]:
+    if not CONFIG_PATH.exists():
+        sys.exit(
+            f"Error: no credentials found at {CONFIG_PATH}. Run 'xnatcli login' first."
+        )
+    config = configparser.ConfigParser()
+    config.read(CONFIG_PATH)
+    if "xnatcli" not in config:
+        sys.exit(
+            f"Error: {CONFIG_PATH} is missing the [xnatcli] section. Run 'xnatcli login' again."
+        )
+    section = config["xnatcli"]
+    for key in ("server", "username", "password"):
+        if not section.get(key):
+            sys.exit(
+                f"Error: {CONFIG_PATH} is missing '{key}'. Run 'xnatcli login' again."
+            )
+    return section["server"], section["username"], section["password"]
+
+
 def _write_credentials(server: str, username: str, password: str) -> None:
     config = configparser.ConfigParser()
     config["xnatcli"] = {
