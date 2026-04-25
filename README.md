@@ -1,6 +1,6 @@
 # XNAT Command Line Interface (CLI)
 
-A small PyXNAT-backed command-line client for logging into an XNAT server and downloading files, known as `xnatcli`.
+A PyXNAT-backed command-line client for logging into an XNAT server and querying experiments or downloading files.
 
 ## Contents
 
