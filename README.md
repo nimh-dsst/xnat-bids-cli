@@ -4,11 +4,11 @@ A PyXNAT-backed command-line client for logging into an XNAT server and querying
 
 ## Contents
 
-- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
+- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`, `xnatcli bidsprep`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
 
 ## Setup
 
-The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependency: `pyxnat`.
+The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependencies: `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`).
 
 ```bash
 uv sync
@@ -25,6 +25,7 @@ The package is organized as:
 - [`src/xnatcli/login.py`](src/xnatcli/login.py) — interactive credential capture, verification, and on-disk storage; also exposes `load_credentials` for the other subcommands.
 - [`src/xnatcli/download.py`](src/xnatcli/download.py) — experiment download.
 - [`src/xnatcli/query.py`](src/xnatcli/query.py) — CSV listing of (project, subject, experiment) triplets.
+- [`src/xnatcli/bidsprep.py`](src/xnatcli/bidsprep.py) — runs `dcm2bids_helper` against a downloaded experiment directory.
 
 Credentials live in `~/.xnatcli/credentials.cfg`, a plain-text [configparser](https://docs.python.org/3/library/configparser.html) file with a single `[xnatcli]` section storing `server`, `username`, and `password`. The file is created via `os.open` with mode `0o600` and re-`chmod`-ed to `0o600` after writing so only the owner can read or write it. (On Windows, `os.chmod` only toggles the read-only bit — the permissions model there is ACL-based; the `0o600` call still runs for portability.)
 
@@ -120,3 +121,24 @@ The output filename is:
 | `PROJECT_ID` | XNAT project ID. |
 | `SUBJECT_ID` | *Optional.* XNAT subject ID or label. If omitted, all subjects in the project are listed. |
 | `-o`, `--output` | **Required.** Directory to write the CSV file into (created if missing). |
+
+## `xnatcli bidsprep`
+
+Runs `dcm2bids_helper` (from [`dcm2bids`](https://unfmontreal.github.io/Dcm2Bids/)) on a single downloaded XNAT experiment directory and writes the helper's output under a per-project bidsprep directory.
+
+1. Validates that the input is a directory and that it contains a `scans/` subdirectory (matching the layout produced by `xnatcli download`).
+2. Derives `PROJECT_ID` from two parent directories above the input — i.e., assumes the layout `<...>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID`.
+3. Verifies that both `dcm2bids_helper` and `dcm2niix` are on `PATH`; exits with an error if either is missing.
+4. Computes the target directory `OUTPUT_DIR/PROJECT_ID-<PROJECT_ID>_bidsprep/`. If it already exists, it is removed and recreated (overwrite).
+5. Invokes `dcm2bids_helper -d EXPERIMENT_DIR/scans -o <target>`. The helper writes its NIfTI/JSON outputs into `<target>/tmp_dcm2bids/helper/`.
+
+```bash
+xnatcli bidsprep PATH/TO/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID -o OUTPUT_DIR
+```
+
+Multiple experiments from the same project intentionally share one project bidsprep directory; running `bidsprep` for a second experiment from the same project will overwrite the first.
+
+| Argument | Description |
+| --- | --- |
+| `EXPERIMENT_DIR` | Path to a downloaded XNAT experiment directory. Its parent is treated as `SUBJECT_ID` and its grandparent as `PROJECT_ID`. |
+| `-o`, `--output` | **Required.** Directory under which `PROJECT_ID-<PROJECT_ID>_bidsprep/` is created (the parent directory is created if missing). |

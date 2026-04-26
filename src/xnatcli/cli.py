@@ -1,6 +1,7 @@
 import argparse
 import sys
 
+from .bidsprep import bidsprep_cmd
 from .download import download_cmd
 from .login import login_cmd
 from .query import query_cmd
@@ -85,6 +86,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory to write the CSV file into.",
     )
     query_parser.set_defaults(func=query_cmd)
+
+    bidsprep_parser = subparsers.add_parser(
+        "bidsprep",
+        help="Run dcm2bids_helper on a downloaded XNAT experiment directory.",
+    )
+    bidsprep_parser.add_argument(
+        "experiment_dir",
+        metavar="EXPERIMENT_DIR",
+        help="Path to a downloaded XNAT experiment directory "
+        "(<...>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID).",
+    )
+    bidsprep_parser.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        metavar="OUTPUT_DIR",
+        help="Directory to write the bidsprep output into. The helper "
+        "results land under OUTPUT_DIR/PROJECT_ID-<PROJECT_ID>_bidsprep/.",
+    )
+    bidsprep_parser.set_defaults(func=bidsprep_cmd)
 
     return parser
 

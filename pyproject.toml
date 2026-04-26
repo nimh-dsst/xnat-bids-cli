@@ -3,6 +3,8 @@ name = "xnatcli"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "dcm2bids>=3",
+    "dcm2niix",
     "pyxnat>=1.6",
 ]
 
