@@ -131,6 +131,15 @@ Runs `dcm2bids_helper` (from [`dcm2bids`](https://unfmontreal.github.io/Dcm2Bids
 3. Verifies that both `dcm2bids_helper` and `dcm2niix` are on `PATH`; exits with an error if either is missing.
 4. Computes the target directory `OUTPUT_DIR/PROJECT_ID-<PROJECT_ID>_bidsprep/`. If it already exists, it is removed and recreated (overwrite).
 5. Invokes `dcm2bids_helper -d EXPERIMENT_DIR/scans -o <target>`. The helper writes its NIfTI/JSON outputs into `<target>/tmp_dcm2bids/helper/`.
+6. Drafts a first-pass dcm2bids config at `<target>/dcm2bids_config.json` from every `tmp_dcm2bids/helper/*.json` sidecar:
+   - For each sidecar with a `BidsGuess` field (set by recent `dcm2niix` releases), parses it into `datatype`, `custom_entities`, and `suffix` (e.g., `["func", "_task-rest_bold"]` → `datatype: func`, `custom_entities: ["task-rest"]`, `suffix: bold`). `run-*`, `echo-*`, and `acq-*` entities are stripped — dcm2bids assigns run/echo numbering automatically, and `acq-*` from BidsGuess (typically a protocol-name shorthand like `acq-epfid2p3`) is replaced by a SeriesDescription-derived `acq-<label>` only when needed for disambiguation.
+   - One description is emitted per unique identity, where identity is the first non-empty of `SeriesDescription`, `ProtocolName`, or `SidecarFilename` (basename). The chosen field becomes the description's `criteria`. Multiple sidecars sharing one identity (e.g., multi-run / multi-echo series with the same `SeriesDescription`) collapse into a single description.
+   - When two or more identities map to the same `(datatype, custom_entities, suffix)` slot, the disambiguator first looks for phase-encoding direction codes (`AP`, `PA`, `RL`, `LR`, `SI`, `IS`) inside each identity. A code only matches when bordered by non-letters (so `MAPS`, `ISIS`, `RAPID` are not false positives); the *last* such code in the identity wins.
+     - Identities sharing a detected code (or none) get bucketed; each bucket gets a `dir-<code>` entity and emits its own description, with the matched code masked out before computing any further `acq-` label. If a bucket still has multiple identities after this, an `acq-<label>` is added — the minimal substring that distinguishes them (longest common prefix and suffix removed, sanitized to `[A-Za-z0-9]`); when minimal-diff fails to yield unique non-empty labels, the full sanitized identity is used instead.
+     - If `BidsGuess` already contained a `dir-XX` for the slot, no promotion happens (the entity is already there); but if any identity contains a *different* direction code, a loud warning is printed flagging the inconsistency.
+     - When a slot has only one identity, no `dir-` promotion happens — the rule is conflict-only.
+   - Sidecars with missing or empty `BidsGuess` are skipped with a warning.
+   - If `<target>/dcm2bids_config.json` already exists, the command refuses to overwrite and exits with an error.
 
 ```bash
 xnatcli bidsprep PATH/TO/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID -o OUTPUT_DIR
