@@ -1,6 +1,7 @@
 import argparse
 import sys
 
+from .bidsconvert import bidsconvert_cmd
 from .bidsprep import bidsprep_cmd
 from .download import download_cmd
 from .login import login_cmd
@@ -106,6 +107,74 @@ def build_parser() -> argparse.ArgumentParser:
         "results land under OUTPUT_DIR/PROJECT_ID-<PROJECT_ID>_bidsprep/.",
     )
     bidsprep_parser.set_defaults(func=bidsprep_cmd)
+
+    bidsconvert_parser = subparsers.add_parser(
+        "bidsconvert",
+        help="Convert XNAT-downloaded sessions to BIDS via dcm2bids.",
+    )
+    bidsconvert_parser.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        metavar="INPUT_DIR",
+        help="Root directory holding PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID "
+        "subdirectories (i.e., the output of `xnatcli download`).",
+    )
+    bidsconvert_source = (
+        bidsconvert_parser.add_mutually_exclusive_group(required=True)
+    )
+    bidsconvert_source.add_argument(
+        "-1",
+        dest="triplet",
+        nargs=3,
+        metavar=("PROJECT_ID", "SUBJECT_ID", "EXPERIMENT_ID"),
+        help="Convert a single session.",
+    )
+    bidsconvert_source.add_argument(
+        "-s",
+        "--subject",
+        nargs=2,
+        metavar=("PROJECT_ID", "SUBJECT_ID"),
+        help="Convert all sessions of one subject.",
+    )
+    bidsconvert_source.add_argument(
+        "-p",
+        "--project",
+        metavar="PROJECT_ID",
+        help="Convert all sessions of all subjects in a project.",
+    )
+    bidsconvert_parser.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        metavar="OUTPUT_DIR",
+        help="Directory to write BIDS-converted data into. Each project's "
+        "BIDS dataset lives at OUTPUT_DIR/PROJECT_ID/.",
+    )
+    bidsconvert_parser.add_argument(
+        "-c",
+        "--config",
+        required=True,
+        metavar="CONFIG_FILE",
+        help="Path to the dcm2bids config JSON to use (e.g., the one drafted "
+        "by `xnatcli bidsprep`).",
+    )
+    bidsconvert_parser.add_argument(
+        "-n",
+        "--nconvert",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of parallel session conversions (default 1).",
+    )
+    bidsconvert_parser.add_argument(
+        "-l",
+        "--log",
+        action="store_true",
+        help="Write a per-session log CSV to "
+        "OUTPUT_DIR/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv.",
+    )
+    bidsconvert_parser.set_defaults(func=bidsconvert_cmd)
 
     return parser
 

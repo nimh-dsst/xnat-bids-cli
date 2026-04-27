@@ -4,11 +4,11 @@ A PyXNAT-backed command-line client for logging into an XNAT server and querying
 
 ## Contents
 
-- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`, `xnatcli bidsprep`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
+- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`, `xnatcli bidsprep`, `xnatcli bidsconvert`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
 
 ## Setup
 
-The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependencies: `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`).
+The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependencies: `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`), `pydicom`.
 
 ```bash
 uv sync
@@ -26,6 +26,7 @@ The package is organized as:
 - [`src/xnatcli/download.py`](src/xnatcli/download.py) — experiment download.
 - [`src/xnatcli/query.py`](src/xnatcli/query.py) — CSV listing of (project, subject, experiment) triplets.
 - [`src/xnatcli/bidsprep.py`](src/xnatcli/bidsprep.py) — runs `dcm2bids_helper` against a downloaded experiment directory.
+- [`src/xnatcli/bidsconvert.py`](src/xnatcli/bidsconvert.py) — converts downloaded XNAT sessions to BIDS via `dcm2bids`.
 
 Credentials live in `~/.xnatcli/credentials.cfg`, a plain-text [configparser](https://docs.python.org/3/library/configparser.html) file with a single `[xnatcli]` section storing `server`, `username`, and `password`. The file is created via `os.open` with mode `0o600` and re-`chmod`-ed to `0o600` after writing so only the owner can read or write it. (On Windows, `os.chmod` only toggles the read-only bit — the permissions model there is ACL-based; the `0o600` call still runs for portability.)
 
@@ -151,3 +152,52 @@ Multiple experiments from the same project intentionally share one project bidsp
 | --- | --- |
 | `EXPERIMENT_DIR` | Path to a downloaded XNAT experiment directory. Its parent is treated as `SUBJECT_ID` and its grandparent as `PROJECT_ID`. |
 | `-o`, `--output` | **Required.** Directory under which `PROJECT_ID-<PROJECT_ID>_bidsprep/` is created (the parent directory is created if missing). |
+
+## `xnatcli bidsconvert`
+
+Converts XNAT-downloaded sessions to BIDS via [`dcm2bids`](https://unfmontreal.github.io/Dcm2Bids/), one or many at a time. The input directory follows the layout produced by `xnatcli download` (`<input>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID/scans/...`); the output is a per-project BIDS dataset at `<output>/PROJECT_ID/sub-<PARTICIPANT>/ses-<SESSION>/`.
+
+1. Validates `--input`, `--config`, and that `dcm2bids` and `dcm2niix` are on `PATH`. Imports `pydicom` (used to confirm a session has at least one readable DICOM before running the conversion).
+2. Resolves the set of sessions to convert from one of the mutually exclusive selectors:
+   - `-1 PROJECT_ID SUBJECT_ID EXPERIMENT_ID` — exactly one session.
+   - `-s/--subject PROJECT_ID SUBJECT_ID` — every `EXPERIMENT_ID` directory under that subject.
+   - `-p/--project PROJECT_ID` — every `EXPERIMENT_ID` directory under every subject in the project.
+3. For each session:
+   - Walks `<input>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID/scans/` recursively for files with extension `.dcm` or `.IMA` (case-insensitive) and tries to read the first match with `pydicom.dcmread(stop_before_pixels=True)`. If no readable DICOM is found, the session is marked `EMPTY`.
+   - Derives the BIDS labels from the IDs themselves: `PARTICIPANT` is `SUBJECT_ID` with non-`[A-Za-z0-9]` characters stripped, `SESSION` is `EXPERIMENT_ID` similarly stripped (case preserved).
+   - If `<output>/PROJECT_ID/sub-<PARTICIPANT>/ses-<SESSION>/` already has contents, prints a `WARNING:` line; the conversion proceeds with `--clobber`.
+   - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT_ID --clobber`.
+4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT_ID,SUBJECT_ID,EXPERIMENT_ID,STATUS`) is written to `<output>/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv`.
+
+```bash
+# One session
+xnatcli bidsconvert -i DOWNLOAD_DIR -1 PROJECT_ID SUBJECT_ID EXPERIMENT_ID -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json
+
+# All sessions of one subject, 4 in parallel, with a log
+xnatcli bidsconvert -i DOWNLOAD_DIR -s PROJECT_ID SUBJECT_ID -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json -n 4 -l
+
+# All sessions of all subjects in a project
+xnatcli bidsconvert -i DOWNLOAD_DIR -p PROJECT_ID -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json
+```
+
+### Per-session STATUS (and exit code)
+
+| STATUS | Meaning |
+| --- | --- |
+| `COMPLETE` | `dcm2bids` exited 0. |
+| `FAILURE` | `dcm2bids` exited non-zero, or sanitized PARTICIPANT/SESSION came out empty. |
+| `NONEXISTENT` | The session directory `<input>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID` does not exist on disk. |
+| `EMPTY` | The session directory exists but no readable `.dcm`/`.IMA` DICOMs were found under `scans/`. |
+
+Exit code is `0` if every processed session is `COMPLETE` or `EMPTY`, and `1` otherwise.
+
+| Argument | Description |
+| --- | --- |
+| `-i`, `--input` | **Required.** Directory holding `PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID` subdirectories. |
+| `-1 PROJECT_ID SUBJECT_ID EXPERIMENT_ID` | Convert a single session. Mutually exclusive with `-s` and `-p`. |
+| `-s`, `--subject PROJECT_ID SUBJECT_ID` | Convert all sessions of one subject. |
+| `-p`, `--project PROJECT_ID` | Convert all sessions of all subjects in a project. |
+| `-o`, `--output` | **Required.** Directory under which `PROJECT_ID/sub-X/ses-Y/` is written. |
+| `-c`, `--config` | **Required.** Path to the `dcm2bids` config JSON (typically the one drafted by `xnatcli bidsprep`). |
+| `-n`, `--nconvert` | *Optional.* Number of parallel session conversions (default `1`). |
+| `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv`. |

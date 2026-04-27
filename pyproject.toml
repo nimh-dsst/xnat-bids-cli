@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 dependencies = [
     "dcm2bids>=3",
     "dcm2niix",
+    "pydicom>=2.4",
     "pyxnat>=1.6",
 ]
 
