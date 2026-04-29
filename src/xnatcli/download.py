@@ -45,9 +45,9 @@ class _LogWriter:
                 csv.writer(f).writerow(
                     [
                         "DATESTAMP",
-                        "PROJECT_ID",
-                        "SUBJECT_ID",
-                        "EXPERIMENT_ID",
+                        "PROJECT",
+                        "SUBJECT",
+                        "EXPERIMENT",
                         "STATUS",
                     ]
                 )
@@ -55,16 +55,16 @@ class _LogWriter:
     def write(
         self,
         datestamp: str,
-        project_id: str,
-        subject_id: str,
-        experiment_id: str,
+        project: str,
+        subject: str,
+        experiment: str,
         status: str,
     ) -> None:
         if self._path is None:
             return
         with self._lock, self._path.open("a", newline="") as f:
             csv.writer(f).writerow(
-                [datestamp, project_id, subject_id, experiment_id, status]
+                [datestamp, project, subject, experiment, status]
             )
 
 
@@ -284,23 +284,23 @@ def _classify_status(file_count: int, success: int, failure: int) -> str:
 
 def _process_experiment(
     interface: Interface,
-    project_id: str,
-    subject_id: str,
-    experiment_id: str,
+    project: str,
+    subject: str,
+    experiment: str,
     output_dir: Path,
     n_parallel_files: int,
     progress: _ProgressDisplay | None = None,
 ) -> str:
-    label = f"{project_id}/{subject_id}/{experiment_id}"
+    label = f"{project}/{subject}/{experiment}"
     try:
-        experiment = (
-            interface.select.project(project_id)
-            .subject(subject_id)
-            .experiment(experiment_id)
+        exp_obj = (
+            interface.select.project(project)
+            .subject(subject)
+            .experiment(experiment)
         )
-        if not experiment.exists():
+        if not exp_obj.exists():
             return STATUS_NONEXISTENT
-        files = _enumerate_files(experiment)
+        files = _enumerate_files(exp_obj)
     except Exception as e:
         msg = f"Error walking {label}: {e}"
         if progress is not None:
@@ -312,7 +312,7 @@ def _process_experiment(
     if not files:
         return STATUS_EMPTY
 
-    experiment_root = output_dir / project_id / subject_id / experiment_id
+    experiment_root = output_dir / project / subject / experiment
 
     slot = progress.acquire(label, len(files)) if progress is not None else -1
     done = [0]
@@ -346,16 +346,16 @@ def _read_csv_rows(path: Path) -> list[tuple[str, str, str]]:
     rows: list[tuple[str, str, str]] = []
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
-        required = {"PROJECT_ID", "SUBJECT_ID", "EXPERIMENT_ID"}
+        required = {"PROJECT", "SUBJECT_LABEL", "EXPERIMENT_LABEL"}
         if not reader.fieldnames or not required.issubset(reader.fieldnames):
             sys.exit(
                 f"Error: input CSV {path} must have columns "
-                "PROJECT_ID, SUBJECT_ID, EXPERIMENT_ID."
+                "PROJECT, SUBJECT_LABEL, EXPERIMENT_LABEL."
             )
         for i, row in enumerate(reader, start=2):
-            p = (row.get("PROJECT_ID") or "").strip()
-            s = (row.get("SUBJECT_ID") or "").strip()
-            e = (row.get("EXPERIMENT_ID") or "").strip()
+            p = (row.get("PROJECT") or "").strip()
+            s = (row.get("SUBJECT_LABEL") or "").strip()
+            e = (row.get("EXPERIMENT_LABEL") or "").strip()
             if not (p and s and e):
                 sys.exit(
                     f"Error: row {i} of {path} is missing a required value."
@@ -368,9 +368,9 @@ def _run_single(
     server: str,
     user: str,
     password: str,
-    project_id: str,
-    subject_id: str,
-    experiment_id: str,
+    project: str,
+    subject: str,
+    experiment: str,
     output_dir: Path,
     n_parallel_files: int,
     log_writer: _LogWriter,
@@ -381,9 +381,9 @@ def _run_single(
         start = _logging_now()
         status = _process_experiment(
             iface,
-            project_id,
-            subject_id,
-            experiment_id,
+            project,
+            subject,
+            experiment,
             output_dir,
             n_parallel_files,
             progress,
@@ -394,7 +394,7 @@ def _run_single(
         except Exception:
             pass
         progress.close()
-    log_writer.write(start, project_id, subject_id, experiment_id, status)
+    log_writer.write(start, project, subject, experiment, status)
     return status
 
 
@@ -460,20 +460,20 @@ def download_cmd(args: argparse.Namespace) -> int:
     log_writer = _LogWriter(log_path)
 
     if args.triplet is not None:
-        project_id, subject_id, experiment_id = args.triplet
+        project, subject, experiment = args.triplet
         status = _run_single(
             server,
             user,
             password,
-            project_id,
-            subject_id,
-            experiment_id,
+            project,
+            subject,
+            experiment,
             output_dir,
             args.ndownload,
             log_writer,
         )
         print(
-            f"Status for {project_id}/{subject_id}/{experiment_id}: {status}"
+            f"Status for {project}/{subject}/{experiment}: {status}"
         )
         if log_path is not None:
             print(f"Log written to {log_path}")

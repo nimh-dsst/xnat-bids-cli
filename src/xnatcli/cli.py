@@ -30,8 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
         "-1",
         dest="triplet",
         nargs=3,
-        metavar=("PROJECT_ID", "SUBJECT_ID", "EXPERIMENT_ID"),
-        help="Download a single experiment from explicit IDs.",
+        metavar=("PROJECT", "SUBJECT", "EXPERIMENT"),
+        help="Download a single experiment. Each value may be either the "
+        "XNAT ID or the user-facing label.",
     )
     download_source.add_argument(
         "-c",
@@ -70,14 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write a CSV of (project, subject, experiment) triplets for a project or subject.",
     )
     query_parser.add_argument(
-        "project_id", metavar="PROJECT_ID", help="XNAT project ID."
+        "project",
+        metavar="PROJECT",
+        help="XNAT project (ID or label).",
     )
     query_parser.add_argument(
-        "subject_id",
-        metavar="SUBJECT_ID",
+        "subject",
+        metavar="SUBJECT",
         nargs="?",
         default=None,
-        help="Optional XNAT subject ID or label. If omitted, all subjects in the project are listed.",
+        help="Optional XNAT subject (ID or label). If omitted, all subjects "
+        "in the project are listed.",
     )
     query_parser.add_argument(
         "-o",
@@ -96,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
         "experiment_dir",
         metavar="EXPERIMENT_DIR",
         help="Path to a downloaded XNAT experiment directory "
-        "(<...>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID).",
+        "(<...>/PROJECT/SUBJECT/EXPERIMENT).",
     )
     bidsprep_parser.add_argument(
         "-o",
@@ -104,7 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="OUTPUT_DIR",
         help="Directory to write the bidsprep output into. The helper "
-        "results land under OUTPUT_DIR/PROJECT_ID-<PROJECT_ID>_bidsprep/.",
+        "results land under OUTPUT_DIR/PROJECT-<PROJECT>_bidsprep/.",
     )
     bidsprep_parser.set_defaults(func=bidsprep_cmd)
 
@@ -117,8 +121,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         required=True,
         metavar="INPUT_DIR",
-        help="Root directory holding PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID "
-        "subdirectories (i.e., the output of `xnatcli download`).",
+        help="Root directory holding PROJECT/SUBJECT/EXPERIMENT "
+        "subdirectories (i.e., the output of `xnatcli download`). The "
+        "directory names should match those written by `xnatcli download` "
+        "(XNAT IDs for the project, labels for subject and experiment).",
     )
     bidsconvert_source = (
         bidsconvert_parser.add_mutually_exclusive_group(required=True)
@@ -127,21 +133,24 @@ def build_parser() -> argparse.ArgumentParser:
         "-1",
         dest="triplet",
         nargs=3,
-        metavar=("PROJECT_ID", "SUBJECT_ID", "EXPERIMENT_ID"),
-        help="Convert a single session.",
+        metavar=("PROJECT", "SUBJECT", "EXPERIMENT"),
+        help="Convert a single session. Each value must match the "
+        "corresponding directory name under INPUT_DIR.",
     )
     bidsconvert_source.add_argument(
         "-s",
         "--subject",
         nargs=2,
-        metavar=("PROJECT_ID", "SUBJECT_ID"),
-        help="Convert all sessions of one subject.",
+        metavar=("PROJECT", "SUBJECT"),
+        help="Convert all sessions of one subject. Values must match the "
+        "corresponding directory names under INPUT_DIR.",
     )
     bidsconvert_source.add_argument(
         "-p",
         "--project",
-        metavar="PROJECT_ID",
-        help="Convert all sessions of all subjects in a project.",
+        metavar="PROJECT",
+        help="Convert all sessions of all subjects in a project. Value "
+        "must match the project directory name under INPUT_DIR.",
     )
     bidsconvert_parser.add_argument(
         "-o",
@@ -149,7 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="OUTPUT_DIR",
         help="Directory to write BIDS-converted data into. Each project's "
-        "BIDS dataset lives at OUTPUT_DIR/PROJECT_ID/.",
+        "BIDS dataset lives at OUTPUT_DIR/PROJECT/.",
     )
     bidsconvert_parser.add_argument(
         "-c",

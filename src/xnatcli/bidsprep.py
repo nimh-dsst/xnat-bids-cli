@@ -294,12 +294,12 @@ def bidsprep_cmd(args: argparse.Namespace) -> int:
             f"Error: expected 'scans/' subdirectory under {experiment_dir}"
         )
 
-    # Layout: <...>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID
+    # Layout: <...>/PROJECT/SUBJECT/EXPERIMENT
     project_dir = experiment_dir.parent.parent
-    project_id = project_dir.name
-    if not project_id or project_dir == experiment_dir:
+    project = project_dir.name
+    if not project or project_dir == experiment_dir:
         sys.exit(
-            "Error: could not derive PROJECT_ID from two directories above "
+            "Error: could not derive PROJECT from two directories above "
             f"{experiment_dir}"
         )
 
@@ -308,7 +308,7 @@ def bidsprep_cmd(args: argparse.Namespace) -> int:
 
     output_dir = Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    target = output_dir / f"PROJECT_ID-{project_id}_bidsprep"
+    target = output_dir / f"PROJECT-{project}_bidsprep"
     if target.exists():
         shutil.rmtree(target)
     target.mkdir(parents=True)

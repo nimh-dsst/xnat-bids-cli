@@ -1,6 +1,7 @@
 import argparse
 import csv
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from pyxnat import Interface
@@ -8,41 +9,58 @@ from pyxnat import Interface
 from .login import load_credentials
 
 
-def _collect_triplets(
+def _experiment_date_yyyymmdd(exp_obj) -> str:
+    try:
+        raw = exp_obj.attrs.get("date")
+    except Exception:
+        return ""
+    if not raw:
+        return ""
+    try:
+        return datetime.strptime(str(raw).strip(), "%Y-%m-%d").strftime("%Y%m%d")
+    except ValueError:
+        return ""
+
+
+def _collect_rows(
     interface: Interface,
-    project_id: str,
-    subject_id: str | None,
-) -> list[tuple[str, str, str]]:
-    project = interface.select.project(project_id)
-    if not project.exists():
+    project: str,
+    subject: str | None,
+) -> list[tuple[str, str, str, str, str, str]]:
+    proj_obj = interface.select.project(project)
+    if not proj_obj.exists():
         sys.exit(
-            f"Error: project '{project_id}' not found on the configured server."
+            f"Error: project '{project}' not found on the configured server."
         )
-    canonical_project = project.id()
+    canonical_project = proj_obj.id()
 
-    triplets: list[tuple[str, str, str]] = []
+    rows: list[tuple[str, str, str, str, str, str]] = []
 
-    if subject_id is None:
-        for subject in project.subjects():
-            canonical_subject = subject.id()
-            for experiment in subject.experiments():
-                triplets.append(
-                    (canonical_project, canonical_subject, experiment.id())
-                )
+    if subject is None:
+        subj_iter = proj_obj.subjects()
     else:
-        subject = project.subject(subject_id)
-        if not subject.exists():
+        only = proj_obj.subject(subject)
+        if not only.exists():
             sys.exit(
-                f"Error: subject '{subject_id}' not found in project "
-                f"'{project_id}' on the configured server."
+                f"Error: subject '{subject}' not found in project "
+                f"'{project}' on the configured server."
             )
-        canonical_subject = subject.id()
-        for experiment in subject.experiments():
-            triplets.append(
-                (canonical_project, canonical_subject, experiment.id())
-            )
+        subj_iter = [only]
 
-    return triplets
+    for subj_obj in subj_iter:
+        subj_label = subj_obj.label()
+        subj_id = subj_obj.id()
+        for exp_obj in subj_obj.experiments():
+            rows.append((
+                canonical_project,
+                subj_label,
+                subj_id,
+                exp_obj.label(),
+                exp_obj.id(),
+                _experiment_date_yyyymmdd(exp_obj),
+            ))
+
+    return rows
 
 
 def query_cmd(args: argparse.Namespace) -> int:
@@ -51,20 +69,16 @@ def query_cmd(args: argparse.Namespace) -> int:
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.subject_id is None:
-        filename = f"PROJECT_ID-{args.project_id}.csv"
+    if args.subject is None:
+        filename = f"PROJECT-{args.project}.csv"
     else:
-        filename = (
-            f"PROJECT_ID-{args.project_id}_SUBJECT_ID-{args.subject_id}.csv"
-        )
+        filename = f"PROJECT-{args.project}_SUBJECT-{args.subject}.csv"
     output_path = output_dir / filename
 
     interface = None
     try:
         interface = Interface(server=server, user=username, password=password)
-        triplets = _collect_triplets(
-            interface, args.project_id, args.subject_id
-        )
+        rows = _collect_rows(interface, args.project, args.subject)
     except SystemExit:
         raise
     except Exception as e:
@@ -78,8 +92,15 @@ def query_cmd(args: argparse.Namespace) -> int:
 
     with output_path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["PROJECT_ID", "SUBJECT_ID", "EXPERIMENT_ID"])
-        writer.writerows(triplets)
+        writer.writerow([
+            "PROJECT",
+            "SUBJECT_LABEL",
+            "SUBJECT_ID",
+            "EXPERIMENT_LABEL",
+            "EXPERIMENT_ID",
+            "EXPERIMENT_DATE",
+        ])
+        writer.writerows(rows)
 
-    print(f"Wrote {len(triplets)} row(s) to {output_path}")
+    print(f"Wrote {len(rows)} row(s) to {output_path}")
     return 0

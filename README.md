@@ -54,12 +54,14 @@ Downloads every file belonging to one XNAT experiment (single-experiment mode, `
 2. Connects to the stored server via PyXNAT.
 3. For each experiment, walks `project → subject → experiment`, then iterates scans, their resources, and every file in each resource. Also iterates session-level resources on the experiment itself.
 4. Writes each file to:
-   - `OUTPUT_DIR/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID/scans/<scan_id>/<resource_label>/<filename>` for scan files
-   - `OUTPUT_DIR/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID/resources/<resource_label>/<filename>` for session-level resource files
+   - `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/scans/<scan_id>/<resource_label>/<filename>` for scan files
+   - `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/resources/<resource_label>/<filename>` for session-level resource files
+
+   `PROJECT` is the canonical XNAT project ID; `SUBJECT` and `EXPERIMENT` are the user-facing labels emitted by `xnatcli query`.
 
 ```bash
 # Single experiment
-xnatcli download -1 PROJECT_ID SUBJECT_ID EXPERIMENT_ID -o OUTPUT_DIR
+xnatcli download -1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR
 
 # Batch from a query CSV
 xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR
@@ -69,8 +71,8 @@ xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR
 
 | Argument | Description |
 | --- | --- |
-| `-1 PROJECT_ID SUBJECT_ID EXPERIMENT_ID` | Download a single experiment from explicit IDs. |
-| `-c`, `--csv`, `-i`, `--input` | Path to a CSV file (`xnatcli query` output) listing experiments to download. Must contain the columns `PROJECT_ID`, `SUBJECT_ID`, `EXPERIMENT_ID`. |
+| `-1 PROJECT SUBJECT EXPERIMENT` | Download a single experiment. Each value may be either the XNAT ID or the user-facing label. |
+| `-c`, `--csv`, `-i`, `--input` | Path to a CSV file (`xnatcli query` output) listing experiments to download. Must contain the columns `PROJECT`, `SUBJECT_LABEL`, `EXPERIMENT_LABEL`; any other columns (e.g., `SUBJECT_ID`, `EXPERIMENT_ID`, `EXPERIMENT_DATE`) are ignored. |
 | `-o`, `--output` | **Required.** Directory to write the downloaded files into (created if missing). |
 | `-n`, `--ndownload` | *Optional.* Number of parallel downloads (default `1`). Per-experiment for `--csv`; per-file for `-1`. |
 | `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/download_<YYYYMMDD_HHMM>_log.csv` (local time, captured at run start). |
@@ -94,33 +96,44 @@ Exit code is `0` if every processed experiment is `COMPLETE` or `EMPTY`, and `1`
 When `-l/--log` is supplied, a CSV is written at `OUTPUT_DIR/log/download_<YYYYMMDD_HHMM>_log.csv`, where the timestamp is the local-time start of the run. The header is always:
 
 ```text
-DATESTAMP,PROJECT_ID,SUBJECT_ID,EXPERIMENT_ID,STATUS
+DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS
 ```
 
 `DATESTAMP` is the per-experiment download attempt begin time, formatted to match Python's `logging` module default `asctime` (`YYYY-MM-DD HH:MM:SS,mmm`, local time). One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
 
 ## `xnatcli query`
 
-Writes a CSV of `(PROJECT_ID, SUBJECT_ID, EXPERIMENT_ID)` triplets — every experiment in a project, or every experiment under a single subject in a project. Values are the canonical XNAT accession IDs (not user-supplied labels), so the CSV is stable regardless of how arguments were typed.
+Writes a CSV of one row per experiment — every experiment in a project, or every experiment under a single subject in a project. The columns are:
+
+| Column | Source |
+| --- | --- |
+| `PROJECT` | Canonical XNAT project ID. |
+| `SUBJECT_LABEL` | User-facing subject label (e.g., `sub-001`). Used by downstream commands and on-disk paths. |
+| `SUBJECT_ID` | XNAT accession ID for the subject (e.g., `XNAT_S00001`). |
+| `EXPERIMENT_LABEL` | User-facing experiment label (e.g., `ses-baseline`). Used by downstream commands and on-disk paths. |
+| `EXPERIMENT_ID` | XNAT accession ID for the experiment (e.g., `XNAT_E00001`). |
+| `EXPERIMENT_DATE` | Experiment date in `YYYYMMDD` format. Empty if unset on the server or unparseable. |
+
+> **Note:** XNAT enforces label uniqueness within a project for both subjects and experiments. If a server somehow contains duplicate labels, the resulting CSV may contain rows that downstream commands cannot disambiguate.
 
 1. Loads credentials from `~/.xnatcli/credentials.cfg`; if the file is missing or incomplete, exits with a message telling you to run `xnatcli login`.
 2. Connects to the stored server via PyXNAT.
 3. Verifies the project exists (and the subject, if provided); exits with an error if not.
-4. Iterates subjects and experiments and writes the triplets to a CSV with header `PROJECT_ID,SUBJECT_ID,EXPERIMENT_ID`. If the project (or subject) exists but has no experiments, a header-only CSV is written. An existing output file is overwritten silently.
+4. Iterates subjects and experiments and writes one row per experiment with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE`. If the project (or subject) exists but has no experiments, a header-only CSV is written. An existing output file is overwritten silently.
 
 ```bash
-xnatcli query PROJECT_ID [SUBJECT_ID] -o OUTPUT_DIR
+xnatcli query PROJECT [SUBJECT] -o OUTPUT_DIR
 ```
 
 The output filename is:
 
-- `OUTPUT_DIR/PROJECT_ID-<PROJECT_ID>.csv` when only `PROJECT_ID` is supplied.
-- `OUTPUT_DIR/PROJECT_ID-<PROJECT_ID>_SUBJECT_ID-<SUBJECT_ID>.csv` when both positional arguments are supplied.
+- `OUTPUT_DIR/PROJECT-<PROJECT>.csv` when only `PROJECT` is supplied.
+- `OUTPUT_DIR/PROJECT-<PROJECT>_SUBJECT-<SUBJECT>.csv` when both positional arguments are supplied.
 
 | Argument | Description |
 | --- | --- |
-| `PROJECT_ID` | XNAT project ID. |
-| `SUBJECT_ID` | *Optional.* XNAT subject ID or label. If omitted, all subjects in the project are listed. |
+| `PROJECT` | XNAT project (ID or label). |
+| `SUBJECT` | *Optional.* XNAT subject (ID or label). If omitted, all subjects in the project are listed. |
 | `-o`, `--output` | **Required.** Directory to write the CSV file into (created if missing). |
 
 ## `xnatcli bidsprep`
@@ -128,9 +141,9 @@ The output filename is:
 Runs `dcm2bids_helper` (from [`dcm2bids`](https://unfmontreal.github.io/Dcm2Bids/)) on a single downloaded XNAT experiment directory and writes the helper's output under a per-project bidsprep directory.
 
 1. Validates that the input is a directory and that it contains a `scans/` subdirectory (matching the layout produced by `xnatcli download`).
-2. Derives `PROJECT_ID` from two parent directories above the input — i.e., assumes the layout `<...>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID`.
+2. Derives `PROJECT` from two parent directories above the input — i.e., assumes the layout `<...>/PROJECT/SUBJECT/EXPERIMENT`.
 3. Verifies that both `dcm2bids_helper` and `dcm2niix` are on `PATH`; exits with an error if either is missing.
-4. Computes the target directory `OUTPUT_DIR/PROJECT_ID-<PROJECT_ID>_bidsprep/`. If it already exists, it is removed and recreated (overwrite).
+4. Computes the target directory `OUTPUT_DIR/PROJECT-<PROJECT>_bidsprep/`. If it already exists, it is removed and recreated (overwrite).
 5. Invokes `dcm2bids_helper -d EXPERIMENT_DIR/scans -o <target>`. The helper writes its NIfTI/JSON outputs into `<target>/tmp_dcm2bids/helper/`.
 6. Drafts a first-pass dcm2bids config at `<target>/dcm2bids_config.json` from every `tmp_dcm2bids/helper/*.json` sidecar:
    - For each sidecar with a `BidsGuess` field (set by recent `dcm2niix` releases), parses it into `datatype`, `custom_entities`, and `suffix` (e.g., `["func", "_task-rest_bold"]` → `datatype: func`, `custom_entities: ["task-rest"]`, `suffix: bold`). `run-*`, `echo-*`, and `acq-*` entities are stripped — dcm2bids assigns run/echo numbering automatically, and `acq-*` from BidsGuess (typically a protocol-name shorthand like `acq-epfid2p3`) is replaced by a SeriesDescription-derived `acq-<label>` only when needed for disambiguation.
@@ -143,41 +156,41 @@ Runs `dcm2bids_helper` (from [`dcm2bids`](https://unfmontreal.github.io/Dcm2Bids
    - If `<target>/dcm2bids_config.json` already exists, the command refuses to overwrite and exits with an error.
 
 ```bash
-xnatcli bidsprep PATH/TO/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID -o OUTPUT_DIR
+xnatcli bidsprep PATH/TO/PROJECT/SUBJECT/EXPERIMENT -o OUTPUT_DIR
 ```
 
 Multiple experiments from the same project intentionally share one project bidsprep directory; running `bidsprep` for a second experiment from the same project will overwrite the first.
 
 | Argument | Description |
 | --- | --- |
-| `EXPERIMENT_DIR` | Path to a downloaded XNAT experiment directory. Its parent is treated as `SUBJECT_ID` and its grandparent as `PROJECT_ID`. |
-| `-o`, `--output` | **Required.** Directory under which `PROJECT_ID-<PROJECT_ID>_bidsprep/` is created (the parent directory is created if missing). |
+| `EXPERIMENT_DIR` | Path to a downloaded XNAT experiment directory. Its parent directory name is treated as `SUBJECT` and its grandparent as `PROJECT`. |
+| `-o`, `--output` | **Required.** Directory under which `PROJECT-<PROJECT>_bidsprep/` is created (the parent directory is created if missing). |
 
 ## `xnatcli bidsconvert`
 
-Converts XNAT-downloaded sessions to BIDS via [`dcm2bids`](https://unfmontreal.github.io/Dcm2Bids/), one or many at a time. The input directory follows the layout produced by `xnatcli download` (`<input>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID/scans/...`); the output is a per-project BIDS dataset at `<output>/PROJECT_ID/sub-<PARTICIPANT>/ses-<SESSION>/`.
+Converts XNAT-downloaded sessions to BIDS via [`dcm2bids`](https://unfmontreal.github.io/Dcm2Bids/), one or many at a time. The input directory follows the layout produced by `xnatcli download` (`<input>/PROJECT/SUBJECT/EXPERIMENT/scans/...`); the output is a per-project BIDS dataset at `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/`.
 
 1. Validates `--input`, `--config`, and that `dcm2bids` and `dcm2niix` are on `PATH`. Imports `pydicom` (used to confirm a session has at least one readable DICOM before running the conversion).
 2. Resolves the set of sessions to convert from one of the mutually exclusive selectors:
-   - `-1 PROJECT_ID SUBJECT_ID EXPERIMENT_ID` — exactly one session.
-   - `-s/--subject PROJECT_ID SUBJECT_ID` — every `EXPERIMENT_ID` directory under that subject.
-   - `-p/--project PROJECT_ID` — every `EXPERIMENT_ID` directory under every subject in the project.
+   - `-1 PROJECT SUBJECT EXPERIMENT` — exactly one session.
+   - `-s/--subject PROJECT SUBJECT` — every `EXPERIMENT` directory under that subject.
+   - `-p/--project PROJECT` — every `EXPERIMENT` directory under every subject in the project.
 3. For each session:
-   - Walks `<input>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID/scans/` recursively for files with extension `.dcm` or `.IMA` (case-insensitive) and tries to read the first match with `pydicom.dcmread(stop_before_pixels=True)`. If no readable DICOM is found, the session is marked `EMPTY`.
-   - Derives the BIDS labels from the IDs themselves: `PARTICIPANT` is `SUBJECT_ID` with non-`[A-Za-z0-9]` characters stripped, `SESSION` is `EXPERIMENT_ID` similarly stripped (case preserved).
-   - If `<output>/PROJECT_ID/sub-<PARTICIPANT>/ses-<SESSION>/` already has contents, prints a `WARNING:` line; the conversion proceeds with `--clobber`.
-   - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT_ID --clobber`.
-4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT_ID,SUBJECT_ID,EXPERIMENT_ID,STATUS`) is written to `<output>/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv`.
+   - Walks `<input>/PROJECT/SUBJECT/EXPERIMENT/scans/` recursively for files with extension `.dcm` or `.IMA` (case-insensitive) and tries to read the first match with `pydicom.dcmread(stop_before_pixels=True)`. If no readable DICOM is found, the session is marked `EMPTY`.
+   - Derives the BIDS labels from the directory names: `PARTICIPANT` is the `SUBJECT` directory name with non-`[A-Za-z0-9]` characters stripped, `SESSION` is the `EXPERIMENT` directory name similarly stripped (case preserved). Because `xnatcli download` writes labels (not XNAT IDs) for these directories, the resulting BIDS labels are derived from human-readable identifiers.
+   - If `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/` already has contents, prints a `WARNING:` line; the conversion proceeds with `--clobber`.
+   - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT --clobber`.
+4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `<output>/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv`.
 
 ```bash
 # One session
-xnatcli bidsconvert -i DOWNLOAD_DIR -1 PROJECT_ID SUBJECT_ID EXPERIMENT_ID -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json
+xnatcli bidsconvert -i DOWNLOAD_DIR -1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json
 
 # All sessions of one subject, 4 in parallel, with a log
-xnatcli bidsconvert -i DOWNLOAD_DIR -s PROJECT_ID SUBJECT_ID -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json -n 4 -l
+xnatcli bidsconvert -i DOWNLOAD_DIR -s PROJECT SUBJECT -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json -n 4 -l
 
 # All sessions of all subjects in a project
-xnatcli bidsconvert -i DOWNLOAD_DIR -p PROJECT_ID -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json
+xnatcli bidsconvert -i DOWNLOAD_DIR -p PROJECT -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json
 ```
 
 ### Per-session STATUS (and exit code)
@@ -186,18 +199,18 @@ xnatcli bidsconvert -i DOWNLOAD_DIR -p PROJECT_ID -o OUTPUT_DIR -c PATH/TO/dcm2b
 | --- | --- |
 | `COMPLETE` | `dcm2bids` exited 0. |
 | `FAILURE` | `dcm2bids` exited non-zero, or sanitized PARTICIPANT/SESSION came out empty. |
-| `NONEXISTENT` | The session directory `<input>/PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID` does not exist on disk. |
+| `NONEXISTENT` | The session directory `<input>/PROJECT/SUBJECT/EXPERIMENT` does not exist on disk. |
 | `EMPTY` | The session directory exists but no readable `.dcm`/`.IMA` DICOMs were found under `scans/`. |
 
 Exit code is `0` if every processed session is `COMPLETE` or `EMPTY`, and `1` otherwise.
 
 | Argument | Description |
 | --- | --- |
-| `-i`, `--input` | **Required.** Directory holding `PROJECT_ID/SUBJECT_ID/EXPERIMENT_ID` subdirectories. |
-| `-1 PROJECT_ID SUBJECT_ID EXPERIMENT_ID` | Convert a single session. Mutually exclusive with `-s` and `-p`. |
-| `-s`, `--subject PROJECT_ID SUBJECT_ID` | Convert all sessions of one subject. |
-| `-p`, `--project PROJECT_ID` | Convert all sessions of all subjects in a project. |
-| `-o`, `--output` | **Required.** Directory under which `PROJECT_ID/sub-X/ses-Y/` is written. |
+| `-i`, `--input` | **Required.** Directory holding `PROJECT/SUBJECT/EXPERIMENT` subdirectories. |
+| `-1 PROJECT SUBJECT EXPERIMENT` | Convert a single session. Mutually exclusive with `-s` and `-p`. Values must match the directory names under `INPUT_DIR`. |
+| `-s`, `--subject PROJECT SUBJECT` | Convert all sessions of one subject. |
+| `-p`, `--project PROJECT` | Convert all sessions of all subjects in a project. |
+| `-o`, `--output` | **Required.** Directory under which `PROJECT/sub-X/ses-Y/` is written. |
 | `-c`, `--config` | **Required.** Path to the `dcm2bids` config JSON (typically the one drafted by `xnatcli bidsprep`). |
 | `-n`, `--nconvert` | *Optional.* Number of parallel session conversions (default `1`). |
 | `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv`. |

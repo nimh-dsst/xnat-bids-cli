@@ -17,6 +17,14 @@ STATUS_EMPTY = "EMPTY"
 _OK_STATUSES = {STATUS_COMPLETE, STATUS_EMPTY}
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 _DICOM_EXTS = {".dcm", ".ima"}
+_DATE_TAGS = (
+    "StudyDate",
+    "SeriesDate",
+    "AcquisitionDate",
+    "ContentDate",
+    "InstanceCreationDate",
+)
+_NON_DIGIT = re.compile(r"\D")
 
 _print_lock = threading.Lock()
 
@@ -41,9 +49,9 @@ class _LogWriter:
                 csv.writer(f).writerow(
                     [
                         "DATESTAMP",
-                        "PROJECT_ID",
-                        "SUBJECT_ID",
-                        "EXPERIMENT_ID",
+                        "PROJECT",
+                        "SUBJECT",
+                        "EXPERIMENT",
                         "STATUS",
                     ]
                 )
@@ -51,46 +59,72 @@ class _LogWriter:
     def write(
         self,
         datestamp: str,
-        project_id: str,
-        subject_id: str,
-        experiment_id: str,
+        project: str,
+        subject: str,
+        experiment: str,
         status: str,
     ) -> None:
         if self._path is None:
             return
         with self._lock, self._path.open("a", newline="") as f:
             csv.writer(f).writerow(
-                [datestamp, project_id, subject_id, experiment_id, status]
+                [datestamp, project, subject, experiment, status]
             )
 
 
-def _find_first_valid_dicom(scans_dir: Path) -> Path | None:
-    """First .dcm/.IMA file under scans_dir that pydicom can parse, or None."""
+def _extract_session_date(ds) -> str | None:
+    """YYYYMMDD from the first non-empty DICOM date tag in priority order."""
+    for tag in _DATE_TAGS:
+        value = getattr(ds, tag, None)
+        if value is None or value == "":
+            continue
+        digits = _NON_DIGIT.sub("", str(value))
+        if len(digits) >= 8:
+            return digits[:8]
+    return None
+
+
+def _scan_dicoms(scans_dir: Path) -> tuple[bool, str | None]:
+    """Walk DICOMs under scans_dir, returning (any_readable, session_date).
+
+    session_date is YYYYMMDD pulled from the first DICOM with a usable date
+    tag, or None if no readable DICOM has one. After a DICOM parses but
+    yields no date, sibling files in that directory are skipped so a series
+    with empty date tags does not block dates available in other series.
+    """
     import pydicom
 
+    any_readable = False
+    skip_dirs: set[Path] = set()
     for path in scans_dir.rglob("*"):
         if not path.is_file():
             continue
         if path.suffix.lower() not in _DICOM_EXTS:
             continue
+        if path.parent in skip_dirs:
+            continue
         try:
-            pydicom.dcmread(str(path), stop_before_pixels=True)
-            return path
+            ds = pydicom.dcmread(str(path), stop_before_pixels=True)
         except Exception:
             continue
-    return None
+        any_readable = True
+        date = _extract_session_date(ds)
+        if date:
+            return True, date
+        skip_dirs.add(path.parent)
+    return any_readable, None
 
 
 def _convert_one(
     input_root: Path,
-    project_id: str,
-    subject_id: str,
-    experiment_id: str,
+    project: str,
+    subject: str,
+    experiment: str,
     output_dir: Path,
     config_path: Path,
     dcm2bids_path: str,
 ) -> tuple[str, str | None]:
-    exp_dir = input_root / project_id / subject_id / experiment_id
+    exp_dir = input_root / project / subject / experiment
     if not exp_dir.is_dir():
         return STATUS_NONEXISTENT, f"session directory not found: {exp_dir}"
 
@@ -98,18 +132,19 @@ def _convert_one(
     if not scans_dir.is_dir():
         return STATUS_EMPTY, f"no 'scans/' subdirectory under {exp_dir}"
 
-    if _find_first_valid_dicom(scans_dir) is None:
+    any_readable, session_date = _scan_dicoms(scans_dir)
+    if not any_readable:
         return STATUS_EMPTY, "no readable .dcm/.IMA DICOM files under scans/"
 
-    participant = _NON_ALNUM.sub("", subject_id)
-    session = _NON_ALNUM.sub("", experiment_id)
+    participant = _NON_ALNUM.sub("", subject)
+    session = session_date or _NON_ALNUM.sub("", experiment)
     if not participant or not session:
         return STATUS_FAILURE, (
             f"empty PARTICIPANT or SESSION after sanitizing "
-            f"SUBJECT_ID={subject_id!r} EXPERIMENT_ID={experiment_id!r}"
+            f"SUBJECT={subject!r} EXPERIMENT={experiment!r}"
         )
 
-    bids_root = output_dir / project_id
+    bids_root = output_dir / project
     sub_dir = bids_root / f"sub-{participant}" / f"ses-{session}"
     if sub_dir.exists() and any(sub_dir.iterdir()):
         _safe_print(f"WARNING: overwriting existing {sub_dir}")
@@ -143,12 +178,12 @@ def _discover_sessions(
         return [(p, s, e)]
 
     if args.subject is not None:
-        project_id, subject_id = args.subject
-        subject_dir = input_root / project_id / subject_id
+        project, subject = args.subject
+        subject_dir = input_root / project / subject
         if not subject_dir.is_dir():
             sys.exit(f"Error: subject directory not found: {subject_dir}")
         sessions = [
-            (project_id, subject_id, exp.name)
+            (project, subject, exp.name)
             for exp in sorted(subject_dir.iterdir())
             if exp.is_dir()
         ]
@@ -156,8 +191,8 @@ def _discover_sessions(
             sys.exit(f"Error: no sessions found under {subject_dir}")
         return sessions
 
-    project_id = args.project
-    project_dir = input_root / project_id
+    project = args.project
+    project_dir = input_root / project
     if not project_dir.is_dir():
         sys.exit(f"Error: project directory not found: {project_dir}")
     sessions: list[tuple[str, str, str]] = []
@@ -167,7 +202,7 @@ def _discover_sessions(
         for exp_dir in sorted(subject_dir.iterdir()):
             if exp_dir.is_dir():
                 sessions.append(
-                    (project_id, subject_dir.name, exp_dir.name)
+                    (project, subject_dir.name, exp_dir.name)
                 )
     if not sessions:
         sys.exit(f"Error: no sessions found under {project_dir}")
