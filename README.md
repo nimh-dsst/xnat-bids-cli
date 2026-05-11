@@ -1,6 +1,6 @@
-# XNAT Command Line Interface (CLI)
+# XNAT CLI for BIDS
 
-A PyXNAT-backed command-line client for logging into an XNAT server and querying experiments or downloading files.
+A command-line interface for logging into an Extensible Neuroimaging Archive Toolkit (XNAT) server, querying experiments and downloading files, then converting to the Brain Imaging Data Structure (BIDS) standard format.
 
 ## Contents
 
@@ -138,7 +138,7 @@ The output filename is:
 
 ## `xnatcli bidsprep`
 
-Runs `dcm2bids_helper` (from [`dcm2bids`](https://unfmontreal.github.io/Dcm2Bids/)) on a single downloaded XNAT experiment directory and writes the helper's output under a per-project bidsprep directory.
+Runs `dcm2bids_helper` (from [`Dcm2Bids`](https://unfmontreal.github.io/Dcm2Bids/)) on a single downloaded XNAT experiment directory and writes the helper's output under a per-project bidsprep directory.
 
 1. Validates that the input is a directory and that it contains a `scans/` subdirectory (matching the layout produced by `xnatcli download`).
 2. Derives `PROJECT` from two parent directories above the input — i.e., assumes the layout `<...>/PROJECT/SUBJECT/EXPERIMENT`.
@@ -168,7 +168,7 @@ Multiple experiments from the same project intentionally share one project bidsp
 
 ## `xnatcli bidsconvert`
 
-Converts XNAT-downloaded sessions to BIDS via [`dcm2bids`](https://unfmontreal.github.io/Dcm2Bids/), one or many at a time. The input directory follows the layout produced by `xnatcli download` (`<input>/PROJECT/SUBJECT/EXPERIMENT/scans/...`); the output is a per-project BIDS dataset at `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/`.
+Converts XNAT-downloaded sessions to BIDS via [`Dcm2Bids`](https://unfmontreal.github.io/Dcm2Bids/), one or many at a time. The input directory follows the layout produced by `xnatcli download` (`<input>/PROJECT/SUBJECT/EXPERIMENT/scans/...`); the output is a per-project BIDS dataset at `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/`.
 
 1. Validates `--input`, `--config`, and that `dcm2bids` and `dcm2niix` are on `PATH`. Imports `pydicom` (used to confirm a session has at least one readable DICOM before running the conversion).
 2. Resolves the set of sessions to convert from one of the mutually exclusive selectors:
