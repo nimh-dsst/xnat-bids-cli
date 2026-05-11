@@ -170,6 +170,20 @@ def _convert_one(
     return STATUS_COMPLETE, None
 
 
+def _delete_input_session(
+    input_root: Path, project: str, subject: str, experiment: str
+) -> None:
+    """Delete the session dir and prune empty SUBJECT/PROJECT parents."""
+    exp_dir = input_root / project / subject / experiment
+    if exp_dir.exists():
+        shutil.rmtree(exp_dir, ignore_errors=True)
+    for parent in (input_root / project / subject, input_root / project):
+        try:
+            parent.rmdir()
+        except OSError:
+            return
+
+
 def _discover_sessions(
     input_root: Path, args: argparse.Namespace
 ) -> list[tuple[str, str, str]]:
@@ -269,6 +283,8 @@ def bidsconvert_cmd(args: argparse.Namespace) -> int:
             line += f" — {detail}"
         _safe_print(line)
         log_writer.write(start, p, s, e, status)
+        if args.delete and status in _OK_STATUSES:
+            _delete_input_session(input_root, p, s, e)
         return status
 
     if args.nconvert <= 1:

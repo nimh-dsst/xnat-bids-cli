@@ -181,6 +181,7 @@ Converts XNAT-downloaded sessions to BIDS via [`dcm2bids`](https://unfmontreal.g
    - If `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/` already has contents, prints a `WARNING:` line; the conversion proceeds with `--clobber`.
    - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT --clobber`.
 4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `<output>/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv`.
+5. With `-d/--delete`, after a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT` is removed (via `shutil.rmtree`). The `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result. `FAILURE` and `NONEXISTENT` sessions are left untouched. Deletion happens after the per-session log row is written, so the log still records what was converted before removal.
 
 ```bash
 # One session
@@ -214,3 +215,4 @@ Exit code is `0` if every processed session is `COMPLETE` or `EMPTY`, and `1` ot
 | `-c`, `--config` | **Required.** Path to the `dcm2bids` config JSON (typically the one drafted by `xnatcli bidsprep`). |
 | `-n`, `--nconvert` | *Optional.* Number of parallel session conversions (default `1`). |
 | `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv`. |
+| `-d`, `--delete` | *Optional.* After a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, delete its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT`. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |

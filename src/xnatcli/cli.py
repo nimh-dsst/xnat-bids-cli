@@ -183,6 +183,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write a per-session log CSV to "
         "OUTPUT_DIR/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv.",
     )
+    bidsconvert_parser.add_argument(
+        "-d",
+        "--delete",
+        action="store_true",
+        help="After a session finishes with STATUS=COMPLETE or STATUS=EMPTY, "
+        "delete its input directory INPUT_DIR/PROJECT/SUBJECT/EXPERIMENT. "
+        "The SUBJECT and PROJECT parent directories are also removed if "
+        "they become empty.",
+    )
     bidsconvert_parser.set_defaults(func=bidsconvert_cmd)
 
     return parser
