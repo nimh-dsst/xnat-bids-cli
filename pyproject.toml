@@ -3,6 +3,7 @@ name = "xnatcli"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "cubids>=1.2.1",
     "dcm2bids>=3",
     "dcm2niix>=1.0.20260416",
     "pydicom>=2.4",
@@ -22,7 +23,7 @@ packages = ["src/xnatcli"]
 [dependency-groups]
 dev = [
     "nibabel>=5.4.2",
-    "pandas>=3.0.2",
+    "pandas>=2,<2.4",
     "ruff>=0.15.4",
 ]
 
