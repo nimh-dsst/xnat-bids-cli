@@ -225,15 +225,17 @@ Runs [`CuBIDS`](https://cubids.readthedocs.io/) on a BIDS dataset produced by `x
 1. Validates that `--input` is an existing directory and that `INPUT_DIR/<PROJECT>/` (the BIDS dataset) exists. The expected layout is the one produced by `xnatcli bidsconvert` — `<input>/PROJECT/sub-X/ses-Y/...`.
 2. Verifies that `cubids` is on `PATH`; exits with an error if it is missing.
 3. Creates the output directory `INPUT_DIR/PROJECT-<PROJECT>_cubids/` if it does not already exist. If it does, the directory is reused (CuBIDS writes its own outputs into it).
-4. Invokes `cubids add-nifti-info <bids_dir>` without `--use-datalad` (datalad is disabled by default in CuBIDS), so the BIDS dataset itself is mutated in place to add NIfTI header info to sidecars.
-5. Invokes `cubids group <bids_dir> <output>/v0`, which writes `v0_summary.tsv`, `v0_files.tsv`, `v0_AcqGrouping.tsv`, and `v0_AcqGroupInfo.txt` into `INPUT_DIR/PROJECT-<PROJECT>_cubids/`.
-6. If `add-nifti-info` exits non-zero, `group` is skipped and the command exits `1`. Otherwise the exit code is `0` if both steps succeeded and `1` if `group` failed.
+4. If `INPUT_DIR/<PROJECT>/tmp_dcm2bids/` exists (leftover dcm2bids scratch), it is moved out to `INPUT_DIR/.<PROJECT>_cubids_stash_tmp_dcm2bids/` for the duration of the run so CuBIDS does not scan it, and moved back when the run finishes (success or failure). CuBIDS has no built-in ignore mechanism; it walks the whole BIDS tree.
+5. Invokes `cubids add-nifti-info <bids_dir>` without `--use-datalad` (datalad is disabled by default in CuBIDS), so the BIDS dataset itself is mutated in place to add NIfTI header info to sidecars.
+6. Invokes `cubids group <bids_dir> v0`, which writes `v0_summary.tsv`, `v0_files.tsv`, `v0_AcqGrouping.tsv`, and `v0_AcqGroupInfo.txt` into `INPUT_DIR/<PROJECT>/code/CuBIDS/`.
+7. On a successful `group`, the `INPUT_DIR/<PROJECT>/code/CuBIDS/` directory is merged into `INPUT_DIR/PROJECT-<PROJECT>_cubids/CuBIDS/` (existing files with the same name are overwritten; unrelated files in the destination are left alone) and the source is removed. If `INPUT_DIR/<PROJECT>/code/` is empty afterwards, it is also removed.
+8. If `add-nifti-info` exits non-zero, `group` is skipped and the command exits `1`. Otherwise the exit code is `0` if both steps succeeded and `1` if `group` failed.
 
 ```bash
 xnatcli cubids -i BIDSCONVERT_OUTPUT_DIR -p PROJECT
 ```
 
-For example, if you ran `xnatcli bidsconvert -i DOWNLOAD_DIR -p MYPROJ -o /data/bids -c config.json`, the BIDS dataset lives at `/data/bids/MYPROJ/`, and `xnatcli cubids -i /data/bids -p MYPROJ` writes CuBIDS outputs to `/data/bids/PROJECT-MYPROJ_cubids/v0_*.tsv`.
+For example, if you ran `xnatcli bidsconvert -i DOWNLOAD_DIR -p MYPROJ -o /data/bids -c config.json`, the BIDS dataset lives at `/data/bids/MYPROJ/`, and `xnatcli cubids -i /data/bids -p MYPROJ` writes CuBIDS outputs to `/data/bids/PROJECT-MYPROJ_cubids/CuBIDS/v0_*.tsv`.
 
 | Argument | Description |
 | --- | --- |

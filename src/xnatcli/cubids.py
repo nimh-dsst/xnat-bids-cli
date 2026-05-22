@@ -88,25 +88,57 @@ def cubids_cmd(args: argparse.Namespace) -> int:
             time.sleep(1)
     log_writer = _LogWriter(log_path)
 
-    ok = _run_step(
-        "add-nifti-info",
-        [cubids, "add-nifti-info", str(bids_dir)],
-        project,
-        log_writer,
-    )
-    if not ok:
+    # cubids walks the whole BIDS tree via rglob and has no ignore mechanism,
+    # so temporarily move dcm2bids scratch out of the dataset for the run.
+    tmp_dcm2bids = bids_dir / "tmp_dcm2bids"
+    stash_path = input_root / f".{project}_cubids_stash_tmp_dcm2bids"
+    stashed = False
+    if tmp_dcm2bids.is_dir():
+        if stash_path.exists():
+            shutil.rmtree(stash_path)
+        shutil.move(str(tmp_dcm2bids), str(stash_path))
+        stashed = True
+
+    try:
+        ok = _run_step(
+            "add-nifti-info",
+            [cubids, "add-nifti-info", str(bids_dir)],
+            project,
+            log_writer,
+        )
+        if not ok:
+            if log_path is not None:
+                print(f"Log written to {log_path}")
+            return 1
+
+        ok = _run_step(
+            "group",
+            [cubids, "group", str(bids_dir), "v0"],
+            project,
+            log_writer,
+        )
+
+        if ok:
+            cubids_src = bids_dir / "code" / "CuBIDS"
+            if cubids_src.is_dir():
+                cubids_dst = output_dir / "CuBIDS"
+                shutil.copytree(cubids_src, cubids_dst, dirs_exist_ok=True)
+                shutil.rmtree(cubids_src)
+                code_dir = bids_dir / "code"
+                if code_dir.is_dir() and not any(code_dir.iterdir()):
+                    code_dir.rmdir()
+
         if log_path is not None:
             print(f"Log written to {log_path}")
-        return 1
-
-    v0_prefix = output_dir / "v0"
-    ok = _run_step(
-        "group",
-        [cubids, "group", str(bids_dir), str(v0_prefix)],
-        project,
-        log_writer,
-    )
-
-    if log_path is not None:
-        print(f"Log written to {log_path}")
-    return 0 if ok else 1
+        return 0 if ok else 1
+    finally:
+        if stashed and stash_path.is_dir():
+            if tmp_dcm2bids.exists():
+                print(
+                    f"Warning: cannot restore {tmp_dcm2bids}; it reappeared "
+                    f"during the cubids run. Stashed copy preserved at "
+                    f"{stash_path}.",
+                    file=sys.stderr,
+                )
+            else:
+                shutil.move(str(stash_path), str(tmp_dcm2bids))
