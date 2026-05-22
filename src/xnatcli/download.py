@@ -11,6 +11,11 @@ from pathlib import Path
 
 from pyxnat import Interface
 
+from .archive import (
+    OK_STATUSES as ARCHIVE_OK_STATUSES,
+    archive_experiment,
+    delete_experiment_dir,
+)
 from .login import load_credentials
 
 STATUS_COMPLETE = "COMPLETE"
@@ -365,6 +370,29 @@ def _read_csv_rows(path: Path) -> list[tuple[str, str, str]]:
     return rows
 
 
+def _archive_and_maybe_delete(
+    output_dir: Path,
+    project: str,
+    subject: str,
+    experiment: str,
+    do_archive: bool,
+    do_delete: bool,
+    report: Callable[[str], None],
+) -> None:
+    if not do_archive:
+        return
+    label = f"{project}/{subject}/{experiment}"
+    a_status, a_detail = archive_experiment(
+        output_dir, project, subject, experiment
+    )
+    line = f"  archive {label}: {a_status}"
+    if a_detail:
+        line += f" — {a_detail}"
+    report(line)
+    if do_delete and a_status in ARCHIVE_OK_STATUSES:
+        delete_experiment_dir(output_dir, project, subject, experiment)
+
+
 def _run_single(
     server: str,
     user: str,
@@ -375,6 +403,8 @@ def _run_single(
     output_dir: Path,
     n_parallel_files: int,
     log_writer: _LogWriter,
+    do_archive: bool,
+    do_delete: bool,
 ) -> str:
     progress = _ProgressDisplay(1)
     iface = Interface(server=server, user=user, password=password)
@@ -396,6 +426,15 @@ def _run_single(
             pass
         progress.close()
     log_writer.write(start, project, subject, experiment, status)
+    _archive_and_maybe_delete(
+        output_dir,
+        project,
+        subject,
+        experiment,
+        do_archive,
+        do_delete,
+        _safe_print,
+    )
     return status
 
 
@@ -407,6 +446,8 @@ def _run_csv(
     output_dir: Path,
     n_parallel_experiments: int,
     log_writer: _LogWriter,
+    do_archive: bool,
+    do_delete: bool,
 ) -> dict[str, int]:
     counts = {
         STATUS_COMPLETE: 0,
@@ -425,6 +466,9 @@ def _run_csv(
         start = _logging_now()
         status = _process_experiment(iface, p, s, e, output_dir, 1, progress)
         log_writer.write(start, p, s, e, status)
+        _archive_and_maybe_delete(
+            output_dir, p, s, e, do_archive, do_delete, progress.print_above
+        )
         return status
 
     try:
@@ -449,6 +493,8 @@ def _run_csv(
 def download_cmd(args: argparse.Namespace) -> int:
     if args.ndownload < 1:
         sys.exit("Error: -n/--ndownload must be >= 1.")
+    if args.delete and not args.archive:
+        sys.exit("Error: -d/--delete requires -a/--archive.")
 
     server, user, password = load_credentials()
     output_dir = Path(args.output)
@@ -476,6 +522,8 @@ def download_cmd(args: argparse.Namespace) -> int:
             output_dir,
             args.ndownload,
             log_writer,
+            args.archive,
+            args.delete,
         )
         print(
             f"Status for {project}/{subject}/{experiment}: {status}"
@@ -493,6 +541,8 @@ def download_cmd(args: argparse.Namespace) -> int:
         output_dir,
         args.ndownload,
         log_writer,
+        args.archive,
+        args.delete,
     )
     total = sum(counts.values())
     print(f"\nProcessed {total} experiment(s):")

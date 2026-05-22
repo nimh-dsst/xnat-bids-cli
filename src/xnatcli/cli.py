@@ -65,6 +65,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write a download log CSV to OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv.",
     )
+    download_parser.add_argument(
+        "-a",
+        "--archive",
+        action="store_true",
+        help="After downloading each experiment, tar+gzip its "
+        "OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT directory into "
+        "OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz. "
+        "Existing archives are skipped with a warning.",
+    )
+    download_parser.add_argument(
+        "-d",
+        "--delete",
+        action="store_true",
+        help="After a successful archive (requires --archive), delete the "
+        "OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT directory. The SUBJECT and "
+        "PROJECT parent directories are also removed if they become empty.",
+    )
     download_parser.set_defaults(func=download_cmd)
 
     query_parser = subparsers.add_parser(
@@ -185,11 +202,24 @@ def build_parser() -> argparse.ArgumentParser:
         "OUTPUT_DIR/log/bidsconvert_<YYYYMMDD_HHMMSS>_log.csv.",
     )
     bidsconvert_parser.add_argument(
+        "-a",
+        "--archive",
+        action="store_true",
+        help="For every session in scope, tar+gzip its "
+        "INPUT_DIR/PROJECT/SUBJECT/EXPERIMENT directory into "
+        "INPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz. "
+        "Existing archives are skipped with a warning. Archiving runs "
+        "regardless of the dcm2bids conversion outcome.",
+    )
+    bidsconvert_parser.add_argument(
         "-d",
         "--delete",
         action="store_true",
-        help="After a session finishes with STATUS=COMPLETE or STATUS=EMPTY, "
-        "delete its input directory INPUT_DIR/PROJECT/SUBJECT/EXPERIMENT. "
+        help="Delete each session's input directory "
+        "INPUT_DIR/PROJECT/SUBJECT/EXPERIMENT after it is safely preserved. "
+        "Without --archive, deletion runs only when the session converted "
+        "with STATUS=COMPLETE or STATUS=EMPTY. With --archive, deletion "
+        "runs after a successful archive regardless of conversion status. "
         "The SUBJECT and PROJECT parent directories are also removed if "
         "they become empty.",
     )
