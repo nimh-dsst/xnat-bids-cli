@@ -159,6 +159,7 @@ def _convert_one(
         "-c", str(config_path),
         "-o", str(bids_root),
         "--clobber",
+        "--force_dcm2bids",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
