@@ -3,6 +3,7 @@ import csv
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -455,8 +456,12 @@ def download_cmd(args: argparse.Namespace) -> int:
 
     log_path: Path | None = None
     if args.log:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
-        log_path = output_dir / "log" / f"download_{ts}_log.csv"
+        while True:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_path = output_dir / "log" / f"download_{ts}_log.csv"
+            if not log_path.exists():
+                break
+            time.sleep(1)
     log_writer = _LogWriter(log_path)
 
     if args.triplet is not None:

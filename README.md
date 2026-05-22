@@ -4,11 +4,11 @@ A command-line interface for logging into an Extensible Neuroimaging Archive Too
 
 ## Contents
 
-- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`, `xnatcli bidsprep`, `xnatcli bidsconvert`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
+- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`, `xnatcli bidsprep`, `xnatcli bidsconvert`, `xnatcli cubids`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
 
 ## Setup
 
-The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependencies: `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`), `pydicom`.
+The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependencies: `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`), `pydicom`, `cubids`.
 
 ```bash
 uv sync
@@ -27,6 +27,7 @@ The package is organized as:
 - [`src/xnatcli/query.py`](src/xnatcli/query.py) — CSV listing of (project, subject, experiment) triplets.
 - [`src/xnatcli/bidsprep.py`](src/xnatcli/bidsprep.py) — runs `dcm2bids_helper` against a downloaded experiment directory.
 - [`src/xnatcli/bidsconvert.py`](src/xnatcli/bidsconvert.py) — converts downloaded XNAT sessions to BIDS via `dcm2bids`.
+- [`src/xnatcli/cubids.py`](src/xnatcli/cubids.py) — runs [`CuBIDS`](https://cubids.readthedocs.io/) `add-nifti-info` and `group` on a BIDS dataset.
 
 Credentials live in `~/.xnatcli/credentials.cfg`, a plain-text [configparser](https://docs.python.org/3/library/configparser.html) file with a single `[xnatcli]` section storing `server`, `username`, and `password`. The file is created via `os.open` with mode `0o600` and re-`chmod`-ed to `0o600` after writing so only the owner can read or write it. (On Windows, `os.chmod` only toggles the read-only bit — the permissions model there is ACL-based; the `0o600` call still runs for portability.)
 
@@ -75,7 +76,7 @@ xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR
 | `-c`, `--csv`, `-i`, `--input` | Path to a CSV file (`xnatcli query` output) listing experiments to download. Must contain the columns `PROJECT`, `SUBJECT_LABEL`, `EXPERIMENT_LABEL`; any other columns (e.g., `SUBJECT_ID`, `EXPERIMENT_ID`, `EXPERIMENT_DATE`) are ignored. |
 | `-o`, `--output` | **Required.** Directory to write the downloaded files into (created if missing). |
 | `-n`, `--ndownload` | *Optional.* Number of parallel downloads (default `1`). Per-experiment for `--csv`; per-file for `-1`. |
-| `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/download_<YYYYMMDD_HHMM>_log.csv` (local time, captured at run start). |
+| `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start). |
 
 ### Per-experiment STATUS (and exit code)
 
@@ -93,7 +94,7 @@ Exit code is `0` if every processed experiment is `COMPLETE` or `EMPTY`, and `1`
 
 ### Download log CSV (`-l`/`--log`)
 
-When `-l/--log` is supplied, a CSV is written at `OUTPUT_DIR/log/download_<YYYYMMDD_HHMM>_log.csv`, where the timestamp is the local-time start of the run. The header is always:
+When `-l/--log` is supplied, a CSV is written at `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv`, where the timestamp is the local-time start of the run. The header is always:
 
 ```text
 DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS
@@ -180,7 +181,7 @@ Converts XNAT-downloaded sessions to BIDS via [`Dcm2Bids`](https://unfmontreal.g
    - Derives the BIDS labels from the directory names: `PARTICIPANT` is the `SUBJECT` directory name with non-`[A-Za-z0-9]` characters stripped, `SESSION` is the `EXPERIMENT` directory name similarly stripped (case preserved). Because `xnatcli download` writes labels (not XNAT IDs) for these directories, the resulting BIDS labels are derived from human-readable identifiers.
    - If `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/` already has contents, prints a `WARNING:` line; the conversion proceeds with `--clobber`.
    - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT --clobber`.
-4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `<output>/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv`.
+4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `<output>/log/bidsconvert_<YYYYMMDD_HHMMSS>_log.csv`.
 5. With `-d/--delete`, after a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT` is removed (via `shutil.rmtree`). The `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result. `FAILURE` and `NONEXISTENT` sessions are left untouched. Deletion happens after the per-session log row is written, so the log still records what was converted before removal.
 
 ```bash
@@ -214,5 +215,28 @@ Exit code is `0` if every processed session is `COMPLETE` or `EMPTY`, and `1` ot
 | `-o`, `--output` | **Required.** Directory under which `PROJECT/sub-X/ses-Y/` is written. |
 | `-c`, `--config` | **Required.** Path to the `dcm2bids` config JSON (typically the one drafted by `xnatcli bidsprep`). |
 | `-n`, `--nconvert` | *Optional.* Number of parallel session conversions (default `1`). |
-| `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv`. |
+| `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/bidsconvert_<YYYYMMDD_HHMMSS>_log.csv`. |
 | `-d`, `--delete` | *Optional.* After a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, delete its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT`. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |
+
+## `xnatcli cubids`
+
+Runs [`CuBIDS`](https://cubids.readthedocs.io/) on a BIDS dataset produced by `xnatcli bidsconvert` — first `cubids add-nifti-info` (which annotates JSON sidecars with NIfTI header fields) and then `cubids group` (which groups acquisitions by their parameters and writes `_summary.tsv`, `_files.tsv`, `_AcqGrouping.tsv`, and `_AcqGroupInfo.txt`).
+
+1. Validates that `--input` is an existing directory and that `INPUT_DIR/<PROJECT>/` (the BIDS dataset) exists. The expected layout is the one produced by `xnatcli bidsconvert` — `<input>/PROJECT/sub-X/ses-Y/...`.
+2. Verifies that `cubids` is on `PATH`; exits with an error if it is missing.
+3. Creates the output directory `INPUT_DIR/PROJECT-<PROJECT>_cubids/` if it does not already exist. If it does, the directory is reused (CuBIDS writes its own outputs into it).
+4. Invokes `cubids add-nifti-info <bids_dir>` without `--use-datalad` (datalad is disabled by default in CuBIDS), so the BIDS dataset itself is mutated in place to add NIfTI header info to sidecars.
+5. Invokes `cubids group <bids_dir> <output>/v0`, which writes `v0_summary.tsv`, `v0_files.tsv`, `v0_AcqGrouping.tsv`, and `v0_AcqGroupInfo.txt` into `INPUT_DIR/PROJECT-<PROJECT>_cubids/`.
+6. If `add-nifti-info` exits non-zero, `group` is skipped and the command exits `1`. Otherwise the exit code is `0` if both steps succeeded and `1` if `group` failed.
+
+```bash
+xnatcli cubids -i BIDSCONVERT_OUTPUT_DIR -p PROJECT
+```
+
+For example, if you ran `xnatcli bidsconvert -i DOWNLOAD_DIR -p MYPROJ -o /data/bids -c config.json`, the BIDS dataset lives at `/data/bids/MYPROJ/`, and `xnatcli cubids -i /data/bids -p MYPROJ` writes CuBIDS outputs to `/data/bids/PROJECT-MYPROJ_cubids/v0_*.tsv`.
+
+| Argument | Description |
+| --- | --- |
+| `-i`, `--input` | **Required.** Parent directory holding the BIDS dataset at `INPUT_DIR/PROJECT/` (i.e., the output of `xnatcli bidsconvert`). The CuBIDS output subdirectory is created here. |
+| `-p`, `--project` | **Required.** Project directory name under `INPUT_DIR` identifying the BIDS dataset to process. |
+| `-l`, `--log` | *Optional.* Write a per-step log CSV to `INPUT_DIR/PROJECT-<PROJECT>_cubids/log/cubids_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,PROJECT,STEP,STATUS`. One row per CuBIDS step (`add-nifti-info`, `group`), each with `STATUS` of `COMPLETE` or `FAILURE`. |

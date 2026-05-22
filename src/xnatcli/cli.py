@@ -3,6 +3,7 @@ import sys
 
 from .bidsconvert import bidsconvert_cmd
 from .bidsprep import bidsprep_cmd
+from .cubids import cubids_cmd
 from .download import download_cmd
 from .login import login_cmd
 from .query import query_cmd
@@ -62,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-l",
         "--log",
         action="store_true",
-        help="Write a download log CSV to OUTPUT_DIR/log/download_<YYYYMMDD_HHMM>_log.csv.",
+        help="Write a download log CSV to OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv.",
     )
     download_parser.set_defaults(func=download_cmd)
 
@@ -181,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--log",
         action="store_true",
         help="Write a per-session log CSV to "
-        "OUTPUT_DIR/log/bidsconvert_<YYYYMMDD_HHMM>_log.csv.",
+        "OUTPUT_DIR/log/bidsconvert_<YYYYMMDD_HHMMSS>_log.csv.",
     )
     bidsconvert_parser.add_argument(
         "-d",
@@ -193,6 +194,36 @@ def build_parser() -> argparse.ArgumentParser:
         "they become empty.",
     )
     bidsconvert_parser.set_defaults(func=bidsconvert_cmd)
+
+    cubids_parser = subparsers.add_parser(
+        "cubids",
+        help="Run cubids add-nifti-info and cubids group on a BIDS dataset.",
+    )
+    cubids_parser.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        metavar="INPUT_DIR",
+        help="Parent directory holding the BIDS dataset at INPUT_DIR/PROJECT/ "
+        "(i.e., the output of `xnatcli bidsconvert`). CuBIDS outputs land "
+        "under INPUT_DIR/PROJECT-<PROJECT>_cubids/.",
+    )
+    cubids_parser.add_argument(
+        "-p",
+        "--project",
+        required=True,
+        metavar="PROJECT",
+        help="Project directory name under INPUT_DIR identifying the BIDS "
+        "dataset to process.",
+    )
+    cubids_parser.add_argument(
+        "-l",
+        "--log",
+        action="store_true",
+        help="Write a per-step log CSV to "
+        "INPUT_DIR/PROJECT-<PROJECT>_cubids/log/cubids_<YYYYMMDD_HHMMSS>_log.csv.",
+    )
+    cubids_parser.set_defaults(func=cubids_cmd)
 
     return parser
 
