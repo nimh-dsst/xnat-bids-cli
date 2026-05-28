@@ -112,13 +112,40 @@ def build_parser() -> argparse.ArgumentParser:
 
     bidsprep_parser = subparsers.add_parser(
         "bidsprep",
-        help="Run dcm2bids_helper on a downloaded XNAT experiment directory.",
+        help="Run dcm2bids_helper on one or many downloaded XNAT experiment "
+        "directories and draft a project-level dcm2bids config.",
     )
     bidsprep_parser.add_argument(
-        "experiment_dir",
-        metavar="EXPERIMENT_DIR",
-        help="Path to a downloaded XNAT experiment directory "
-        "(<...>/PROJECT/SUBJECT/EXPERIMENT).",
+        "-i",
+        "--input",
+        required=True,
+        metavar="INPUT_DIR",
+        help="Root directory holding PROJECT/SUBJECT/EXPERIMENT "
+        "subdirectories (i.e., the output of `xnatcli download`).",
+    )
+    bidsprep_source = (
+        bidsprep_parser.add_mutually_exclusive_group(required=True)
+    )
+    bidsprep_source.add_argument(
+        "-1",
+        dest="triplet",
+        nargs=3,
+        metavar=("PROJECT", "SUBJECT", "EXPERIMENT"),
+        help="Run helper on a single experiment. Each value must match the "
+        "corresponding directory name under INPUT_DIR.",
+    )
+    bidsprep_source.add_argument(
+        "-s",
+        "--subject",
+        nargs=2,
+        metavar=("PROJECT", "SUBJECT"),
+        help="Run helper on every experiment of one subject.",
+    )
+    bidsprep_source.add_argument(
+        "-p",
+        "--project",
+        metavar="PROJECT",
+        help="Run helper on every experiment of every subject in a project.",
     )
     bidsprep_parser.add_argument(
         "-o",
@@ -127,6 +154,22 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="OUTPUT_DIR",
         help="Directory to write the bidsprep output into. The helper "
         "results land under OUTPUT_DIR/PROJECT-<PROJECT>_bidsprep/.",
+    )
+    bidsprep_parser.add_argument(
+        "-n",
+        "--nprep",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of parallel dcm2bids_helper invocations, one per "
+        "experiment per core (default 1).",
+    )
+    bidsprep_parser.add_argument(
+        "-l",
+        "--log",
+        action="store_true",
+        help="Write a per-experiment log CSV to "
+        "OUTPUT_DIR/log/bidsprep_<YYYYMMDD_HHMMSS>_log.csv.",
     )
     bidsprep_parser.set_defaults(func=bidsprep_cmd)
 

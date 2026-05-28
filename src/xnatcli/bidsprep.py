@@ -1,16 +1,69 @@
 import argparse
+import csv
 import json
 import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
+
+STATUS_COMPLETE = "COMPLETE"
+STATUS_FAILURE = "FAILURE"
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 _DIRECTION_CODES = ("AP", "PA", "RL", "LR", "SI", "IS")
 _DIRECTION_RE = re.compile(
     rf"(?<![A-Za-z])({'|'.join(_DIRECTION_CODES)})(?![A-Za-z])"
 )
+
+_print_lock = threading.Lock()
+
+
+def _safe_print(msg: str) -> None:
+    with _print_lock:
+        print(msg)
+
+
+def _logging_now() -> str:
+    now = datetime.now()
+    return f"{now.strftime('%Y-%m-%d %H:%M:%S')},{now.microsecond // 1000:03d}"
+
+
+class _LogWriter:
+    def __init__(self, path: Path | None):
+        self._path = path
+        self._lock = threading.Lock()
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", newline="") as f:
+                csv.writer(f).writerow(
+                    [
+                        "DATESTAMP",
+                        "PROJECT",
+                        "SUBJECT",
+                        "EXPERIMENT",
+                        "STATUS",
+                    ]
+                )
+
+    def write(
+        self,
+        datestamp: str,
+        project: str,
+        subject: str,
+        experiment: str,
+        status: str,
+    ) -> None:
+        if self._path is None:
+            return
+        with self._lock, self._path.open("a", newline="") as f:
+            csv.writer(f).writerow(
+                [datestamp, project, subject, experiment, status]
+            )
 
 
 def _detect_direction(identity: str) -> str | None:
@@ -114,20 +167,18 @@ def _identity_for_sidecar(
 
 
 def _draft_config(target: Path) -> None:
-    helper_dir = target / "tmp_dcm2bids" / "helper"
-    config_path = target / "dcm2bids_config.json"
+    helper_root = target / "tmp_dcm2bids" / "helper"
 
-    if config_path.exists():
-        sys.exit(
-            f"Error: {config_path} already exists; refusing to overwrite."
-        )
-    if not helper_dir.is_dir():
-        print(f"Helper output directory not found: {helper_dir}; skipping config draft.")
+    if not helper_root.is_dir():
+        print(f"Helper output directory not found: {helper_root}; skipping config draft.")
         return
 
-    json_files = sorted(helper_dir.glob("*.json"))
+    # With dcm2bids_helper -n <EXPERIMENT>, sidecars live at
+    # <helper_root>/<EXPERIMENT>/*.json. Aggregate across every nested
+    # experiment subdirectory so the drafted config covers the whole project.
+    json_files = sorted(helper_root.rglob("*.json"))
     if not json_files:
-        print(f"No JSON sidecars found in {helper_dir}; no config drafted.")
+        print(f"No JSON sidecars found under {helper_root}; no config drafted.")
         return
 
     # Outer group: (datatype, entities, suffix). Inner sub-group: unique
@@ -274,6 +325,11 @@ def _draft_config(target: Path) -> None:
                         "criteria": {field: value},
                     })
 
+    config_path = target / "dcm2bids_config.json"
+    if config_path.exists():
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        config_path = target / f"dcm2bids_config_{ts}.json"
+
     config_path.write_text(
         json.dumps({"descriptions": descriptions}, indent=2) + "\n"
     )
@@ -283,44 +339,136 @@ def _draft_config(target: Path) -> None:
     )
 
 
-def bidsprep_cmd(args: argparse.Namespace) -> int:
-    experiment_dir = Path(args.experiment_dir).resolve()
-    if not experiment_dir.is_dir():
-        sys.exit(f"Error: input is not a directory: {experiment_dir}")
+def _discover_experiments(
+    input_root: Path, args: argparse.Namespace
+) -> list[tuple[str, str, str]]:
+    if args.triplet is not None:
+        p, s, e = args.triplet
+        exp_dir = input_root / p / s / e
+        if not exp_dir.is_dir():
+            sys.exit(f"Error: experiment directory not found: {exp_dir}")
+        return [(p, s, e)]
 
-    scans_dir = experiment_dir / "scans"
+    if args.subject is not None:
+        project, subject = args.subject
+        subject_dir = input_root / project / subject
+        if not subject_dir.is_dir():
+            sys.exit(f"Error: subject directory not found: {subject_dir}")
+        exps = [
+            (project, subject, exp.name)
+            for exp in sorted(subject_dir.iterdir())
+            if exp.is_dir()
+        ]
+        if not exps:
+            sys.exit(f"Error: no experiments found under {subject_dir}")
+        return exps
+
+    project = args.project
+    project_dir = input_root / project
+    if not project_dir.is_dir():
+        sys.exit(f"Error: project directory not found: {project_dir}")
+    exps: list[tuple[str, str, str]] = []
+    for subject_dir in sorted(project_dir.iterdir()):
+        if not subject_dir.is_dir():
+            continue
+        for exp_dir in sorted(subject_dir.iterdir()):
+            if exp_dir.is_dir():
+                exps.append((project, subject_dir.name, exp_dir.name))
+    if not exps:
+        sys.exit(f"Error: no experiments found under {project_dir}")
+    return exps
+
+
+def _run_helper(
+    input_root: Path,
+    project: str,
+    subject: str,
+    experiment: str,
+    target: Path,
+    helper_path: str,
+) -> tuple[str, str | None]:
+    exp_dir = input_root / project / subject / experiment
+    scans_dir = exp_dir / "scans"
     if not scans_dir.is_dir():
-        sys.exit(
-            f"Error: expected 'scans/' subdirectory under {experiment_dir}"
-        )
+        return STATUS_FAILURE, f"no 'scans/' subdirectory under {exp_dir}"
 
-    # Layout: <...>/PROJECT/SUBJECT/EXPERIMENT
-    project_dir = experiment_dir.parent.parent
-    project = project_dir.name
-    if not project or project_dir == experiment_dir:
-        sys.exit(
-            "Error: could not derive PROJECT from two directories above "
-            f"{experiment_dir}"
+    cmd = [
+        helper_path,
+        "-d", str(scans_dir),
+        "-o", str(target),
+        "-n", experiment,
+        "--force",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr_tail = (result.stderr or "").strip().splitlines()[-1:] or [""]
+        return STATUS_FAILURE, (
+            f"dcm2bids_helper exited with code {result.returncode}"
+            + (f" — {stderr_tail[0]}" if stderr_tail[0] else "")
         )
+    return STATUS_COMPLETE, None
 
-    helper = _require_tool("dcm2bids_helper")
+
+def bidsprep_cmd(args: argparse.Namespace) -> int:
+    if args.nprep < 1:
+        sys.exit("Error: -n/--nprep must be >= 1.")
+
+    input_root = Path(args.input).resolve()
+    if not input_root.is_dir():
+        sys.exit(f"Error: input directory not found: {input_root}")
+
+    helper_path = _require_tool("dcm2bids_helper")
     _require_tool("dcm2niix")
+
+    experiments = _discover_experiments(input_root, args)
+    project = experiments[0][0]
 
     output_dir = Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     target = output_dir / f"PROJECT-{project}_bidsprep"
-    if target.exists():
-        shutil.rmtree(target)
-    target.mkdir(parents=True)
+    target.mkdir(parents=True, exist_ok=True)
 
-    cmd = [helper, "-d", str(scans_dir), "-o", str(target)]
-    print(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        sys.exit(
-            f"Error: dcm2bids_helper exited with code {result.returncode}."
+    log_path: Path | None = None
+    if args.log:
+        while True:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_path = output_dir / "log" / f"bidsprep_{ts}_log.csv"
+            if not log_path.exists():
+                break
+            time.sleep(1)
+    log_writer = _LogWriter(log_path)
+
+    counts = {STATUS_COMPLETE: 0, STATUS_FAILURE: 0}
+
+    def _one(triplet: tuple[str, str, str]) -> str:
+        p, s, e = triplet
+        start = _logging_now()
+        status, detail = _run_helper(
+            input_root, p, s, e, target, helper_path
         )
-    print(f"Helper output written to {target}")
+        line = f"{p}/{s}/{e}: {status}"
+        if detail:
+            line += f" — {detail}"
+        _safe_print(line)
+        log_writer.write(start, p, s, e, status)
+        return status
+
+    if args.nprep <= 1:
+        for triplet in experiments:
+            counts[_one(triplet)] += 1
+    else:
+        with ThreadPoolExecutor(max_workers=args.nprep) as ex:
+            futures = [ex.submit(_one, t) for t in experiments]
+            for fut in as_completed(futures):
+                counts[fut.result()] += 1
+
+    total = sum(counts.values())
+    print(f"\nProcessed {total} experiment(s):")
+    for status in (STATUS_COMPLETE, STATUS_FAILURE):
+        print(f"  {status}: {counts[status]}")
+    if log_path is not None:
+        print(f"Log written to {log_path}")
 
     _draft_config(target)
-    return 0
+
+    return 0 if counts[STATUS_FAILURE] == 0 else 1
