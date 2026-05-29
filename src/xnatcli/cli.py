@@ -171,6 +171,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write a per-experiment log CSV to "
         "OUTPUT_DIR/log/bidsprep_<YYYYMMDD_HHMMSS>_log.csv.",
     )
+    bidsprep_parser.add_argument(
+        "-d",
+        "--delete",
+        action="store_true",
+        help="Delete *.nii.gz files from each experiment's helper subdir "
+        "(OUTPUT_DIR/PROJECT-<PROJECT>_bidsprep/tmp_dcm2bids/helper/<EXPERIMENT>/) "
+        "right after dcm2bids_helper returns, regardless of STATUS. JSON "
+        "sidecars (used by the config draft) are kept.",
+    )
     bidsprep_parser.set_defaults(func=bidsprep_cmd)
 
     bidsconvert_parser = subparsers.add_parser(

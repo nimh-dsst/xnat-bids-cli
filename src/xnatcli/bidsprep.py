@@ -379,6 +379,21 @@ def _discover_experiments(
     return exps
 
 
+def _delete_niftis(target: Path, experiment: str) -> int:
+    """Remove *.nii.gz from this experiment's helper subdir; return count."""
+    helper_subdir = target / "tmp_dcm2bids" / "helper" / experiment
+    if not helper_subdir.is_dir():
+        return 0
+    count = 0
+    for f in helper_subdir.glob("*.nii.gz"):
+        try:
+            f.unlink()
+            count += 1
+        except OSError:
+            pass
+    return count
+
+
 def _run_helper(
     input_root: Path,
     project: str,
@@ -446,9 +461,12 @@ def bidsprep_cmd(args: argparse.Namespace) -> int:
         status, detail = _run_helper(
             input_root, p, s, e, target, helper_path
         )
+        deleted = _delete_niftis(target, e) if args.delete else 0
         line = f"{p}/{s}/{e}: {status}"
         if detail:
             line += f" — {detail}"
+        if args.delete:
+            line += f" (removed {deleted} .nii.gz)"
         _safe_print(line)
         log_writer.write(start, p, s, e, status)
         return status

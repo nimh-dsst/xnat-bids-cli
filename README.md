@@ -182,6 +182,8 @@ Exit code is `0` if every processed experiment is `COMPLETE`, and `1` otherwise.
 
 With `-l/--log`, a CSV identical in shape to `download`'s and `bidsconvert`'s logs (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `OUTPUT_DIR/log/bidsprep_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start). One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
 
+With `-d/--delete`, every `*.nii.gz` file in each experiment's helper subdir (`OUTPUT_DIR/PROJECT-<PROJECT>_bidsprep/tmp_dcm2bids/helper/<EXPERIMENT>/`) is removed right after `dcm2bids_helper` returns for that experiment, regardless of STATUS. JSON sidecars are kept — the project-level config draft only needs the JSONs, and the NIfTI images are typically far larger. The per-experiment status line gets a trailing `(removed N .nii.gz)` so the deletion is visible. Use this when you only need the drafted config and not the helper-stage NIfTIs.
+
 | Argument | Description |
 | --- | --- |
 | `-i`, `--input` | **Required.** Root directory holding `PROJECT/SUBJECT/EXPERIMENT` subdirectories. |
@@ -191,6 +193,7 @@ With `-l/--log`, a CSV identical in shape to `download`'s and `bidsconvert`'s lo
 | `-o`, `--output` | **Required.** Directory under which `PROJECT-<PROJECT>_bidsprep/` is created (the parent directory is created if missing). |
 | `-n`, `--nprep` | *Optional.* Number of parallel dcm2bids_helper invocations, one per experiment per worker (default `1`). |
 | `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/bidsprep_<YYYYMMDD_HHMMSS>_log.csv`. |
+| `-d`, `--delete` | *Optional.* After each experiment's helper run, delete `*.nii.gz` from its `tmp_dcm2bids/helper/<EXPERIMENT>/` subdir. JSON sidecars are kept. |
 
 ## `xnatcli bidsconvert`
 
