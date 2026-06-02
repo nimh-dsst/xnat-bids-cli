@@ -4,11 +4,11 @@ A command-line interface for logging into an Extensible Neuroimaging Archive Too
 
 ## Contents
 
-- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`, `xnatcli bidsprep`, `xnatcli bidsconvert`, `xnatcli cubids`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
+- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`, `xnatcli bidsprep`, `xnatcli bidsconvert`, `xnatcli cubids`, `xnatcli map`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
 
 ## Setup
 
-The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependencies: `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`), `pydicom`, `cubids`.
+The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependencies: `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`), `pydicom`, `cubids`, `nibabel` (used to read NIfTI shapes for the `bidsconvert` `scans.tsv`), `pandas` (used by `map`).
 
 ```bash
 uv sync
@@ -28,6 +28,7 @@ The package is organized as:
 - [`src/xnatcli/bidsprep.py`](src/xnatcli/bidsprep.py) — runs `dcm2bids_helper` against a downloaded experiment directory.
 - [`src/xnatcli/bidsconvert.py`](src/xnatcli/bidsconvert.py) — converts downloaded XNAT sessions to BIDS via `dcm2bids`.
 - [`src/xnatcli/cubids.py`](src/xnatcli/cubids.py) — runs [`CuBIDS`](https://cubids.readthedocs.io/) `add-nifti-info` and `group` on a BIDS dataset.
+- [`src/xnatcli/map.py`](src/xnatcli/map.py) — generates/updates a participant/session mapping TSV for a BIDS dataset (uses [`pandas`](https://pandas.pydata.org/)).
 
 Credentials live in `~/.xnatcli/credentials.cfg`, a plain-text [configparser](https://docs.python.org/3/library/configparser.html) file with a single `[xnatcli]` section storing `server`, `username`, and `password`. The file is created via `os.open` with mode `0o600` and re-`chmod`-ed to `0o600` after writing so only the owner can read or write it. (On Windows, `os.chmod` only toggles the read-only bit — the permissions model there is ACL-based; the `0o600` call still runs for portability.)
 
@@ -211,6 +212,7 @@ Converts XNAT-downloaded sessions to BIDS via [`Dcm2Bids`](https://unfmontreal.g
    - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT --clobber`.
 4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `<output>/log/bidsconvert_<YYYYMMDD_HHMMSS>_log.csv`.
 5. With `-d/--delete`, after a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT` is removed (via `shutil.rmtree`). The `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result. `FAILURE` and `NONEXISTENT` sessions are left untouched. Deletion happens after the per-session log row is written, so the log still records what was converted before removal.
+6. After all sessions are processed, a root-level `scans.tsv` is (re)written at `<output>/PROJECT/scans.tsv`, and the static data dictionary [`src/assets/scans.json`](src/assets/scans.json) is copied alongside it as `<output>/PROJECT/scans.json`. See [Root-level `scans.tsv`](#root-level-scanstsv) below.
 
 ```bash
 # One session
@@ -246,6 +248,40 @@ Exit code is `0` if every processed session is `COMPLETE` or `EMPTY`, and `1` ot
 | `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/bidsconvert_<YYYYMMDD_HHMMSS>_log.csv`. |
 | `-d`, `--delete` | *Optional.* After a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, delete its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT`. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |
 
+### Root-level `scans.tsv`
+
+At the end of every `bidsconvert` run, a single dataset-wide `scans.tsv` is (re)generated at the project root, `<output>/PROJECT/scans.tsv`. It is rebuilt from scratch each run by walking the dataset with `os.walk` for every `.nii.gz` file (the dcm2bids `tmp_dcm2bids/` scratch directory is skipped). The static data dictionary [`src/assets/scans.json`](src/assets/scans.json) is copied next to it as `<output>/PROJECT/scans.json`. Reading NIfTI shapes uses `nibabel`; if it is not installed, the `dimensions` column is left empty and a warning is printed.
+
+To protect manual review work, an existing `scans.tsv` is **not** overwritten if any of its reviewer columns (`rename`, `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, `qc_notes`) hold any text — the generator prints a warning and leaves the file untouched. A `scans.tsv` whose reviewer columns are all still empty is regenerated normally.
+
+Whenever a `scans.tsv` already exists, the freshly generated rows are compared against it and every difference in a **non-user (generator-owned)** field — `acq_time`, `series_number`, `dimensions`, `size_bytes`, `bids_name`, `participant_id`, `session_id`, `datatype`, `task`, `acquisition`, `echo`, `run`, `suffix`, plus files added or removed on disk — is reported as one `WARNING` per deviation to stdout and to a log file at `<output>/log/scans_deviations_<PROJECT>_<YYYYMMDD_HHMMSS>.log`. The log is written only when there is at least one deviation. (When `nibabel` is unavailable, `dimensions` is excluded from the comparison so its empty values are not flagged.) Reviewer-column edits are never reported as deviations.
+
+The columns, in order:
+
+| Column | Source |
+| --- | --- |
+| `filename` | Path relative to the `PROJECT` root, POSIX separators, no leading `./` or `/`. |
+| `acq_time` | `AcquisitionTime` from the file's JSON sidecar (empty if absent). |
+| `series_number` | `SeriesNumber` from the file's JSON sidecar (empty if absent). |
+| `dimensions` | `nibabel` image shape, `x`-joined, always padded to include the 4th dimension even when it is `1` (e.g. `256x256x170x1`). |
+| `size_bytes` | File size on disk, in bytes. |
+| `bids_name` | The basename between the `sub-<label>_ses-<label>_` prefix and the `.nii.gz` extension. |
+| `rename` | Empty — for the end-user to record a corrected `bids_name`. |
+| `recommend_for_use` | Empty — end-user `TRUE`/`FALSE` review field. |
+| `complete` | Empty — end-user `TRUE`/`FALSE` review field (acquired at full intended length). |
+| `usable` | Empty — end-user `TRUE`/`FALSE` review field. |
+| `qc_rating` | Empty — end-user `PASS`/`FAIL`/`UNCERTAIN` review field. |
+| `rating_reason` | Empty — free-text reason for `qc_rating`. |
+| `qc_notes` | Empty — free-text QC notes. |
+| `participant_id` | `sub-<label>` parsed from the filename. |
+| `session_id` | `ses-<label>` parsed from the filename. |
+| `datatype` | Name of the file's parent directory (e.g. `anat`, `func`). |
+| `task` | The full `task-<label>` entity (prefix included), or empty. |
+| `acquisition` | The full `acq-<label>` entity (prefix included), or empty. |
+| `echo` | The full `echo-<index>` entity (prefix included), or empty. |
+| `run` | The full `run-<index>` entity (prefix included), or empty. |
+| `suffix` | Basename portion after the last underscore (never empty). |
+
 ## `xnatcli cubids`
 
 Runs [`CuBIDS`](https://cubids.readthedocs.io/) on a BIDS dataset produced by `xnatcli bidsconvert` — first `cubids add-nifti-info` (which annotates JSON sidecars with NIfTI header fields) and then `cubids group` (which groups acquisitions by their parameters and writes `_summary.tsv`, `_files.tsv`, `_AcqGrouping.tsv`, and `_AcqGroupInfo.txt`).
@@ -270,3 +306,25 @@ For example, if you ran `xnatcli bidsconvert -i DOWNLOAD_DIR -p MYPROJ -o /data/
 | `-i`, `--input` | **Required.** Parent directory holding the BIDS dataset at `INPUT_DIR/PROJECT/` (i.e., the output of `xnatcli bidsconvert`). The CuBIDS output subdirectory is created here. |
 | `-p`, `--project` | **Required.** Project directory name under `INPUT_DIR` identifying the BIDS dataset to process. |
 | `-l`, `--log` | *Optional.* Write a per-step log CSV to `INPUT_DIR/PROJECT-<PROJECT>_cubids/log/cubids_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,PROJECT,STEP,STATUS`. One row per CuBIDS step (`add-nifti-info`, `group`), each with `STATUS` of `COMPLETE` or `FAILURE`. |
+
+## `xnatcli map`
+
+Generates a participant/session mapping TSV for a BIDS dataset (the output of `xnatcli bidsconvert`, at `INPUT_DIR/PROJECT/`). The map is later filled in by hand to relate XNAT IDs and real dates to anonymized BIDS IDs and session codenames.
+
+1. Validates that `--input` exists and that the BIDS dataset `INPUT_DIR/PROJECT/` exists.
+2. Scans `INPUT_DIR/PROJECT/` for `sub-*` directories and, within each, `ses-*` subdirectories.
+3. Writes `INPUT_DIR/PROJECT-<PROJECT>_map.tsv` with the columns `participant_id`, `participant_rename`, `session_id`, `session_rename`. One row is emitted per `(participant, session)` pair, with the two `*_rename` columns left blank for later editing. Rows are sorted alphanumerically by `participant_id` then `session_id`.
+   - If the dataset has **no** sessions (no participant has any `ses-*` subdirectory), only the `participant_id` and `participant_rename` columns are written, one row per participant.
+   - If the dataset uses sessions but a particular participant has no `ses-*` subdirectory, that participant is skipped with a warning.
+4. If `PROJECT-<PROJECT>_map.tsv` already exists, a fresh blank map is generated and compared to it (with `pandas`): any `(participant_id, session_id)` pairs not already present are appended, and all existing rows — including any `*_rename` values already filled in — are preserved. The merged table is re-sorted and rewritten.
+
+```bash
+xnatcli map -i BIDSCONVERT_OUTPUT_DIR -p PROJECT
+```
+
+For example, if the BIDS dataset lives at `/data/bids/MYPROJ/`, then `xnatcli map -i /data/bids -p MYPROJ` writes `/data/bids/PROJECT-MYPROJ_map.tsv`.
+
+| Argument | Description |
+| --- | --- |
+| `-i`, `--input` | **Required.** BIDS root directory holding the dataset at `INPUT_DIR/PROJECT/`. The map TSV is written here as `PROJECT-<PROJECT>_map.tsv`. |
+| `-p`, `--project` | **Required.** Project directory name under `INPUT_DIR` identifying the BIDS dataset to scan. |

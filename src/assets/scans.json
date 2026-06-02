@@ -1,0 +1,82 @@
+{
+    "filename": {
+        "Description": "Path to the NIfTI file relative to the root inside the PROJECT (BIDS dataset) directory, with no leading periods or slashes."
+    },
+    "acq_time": {
+        "Description": "Acquisition time of the scan, taken from the AcquisitionTime field of the file's accompanying JSON sidecar. Empty when the field or sidecar is absent."
+    },
+    "series_number": {
+        "Description": "DICOM study series number, taken from the SeriesNumber field of the file's accompanying JSON sidecar. Empty when the field or sidecar is absent."
+    },
+    "dimensions": {
+        "Description": "Image array shape as read by nibabel, given as x-joined dimension sizes and always including the 4th (time) dimension even when it is 1 (e.g. 256x256x170x1)."
+    },
+    "size_bytes": {
+        "Description": "Size of the NIfTI file on disk, in bytes."
+    },
+    "bids_name": {
+        "Description": "The portion of the file basename between the sub-<label>_ses-<label>_ prefix and the .nii.gz extension."
+    },
+    "rename": {
+        "Description": "Free-text field for an end-user to record a corrected bids_name when the file needs renaming. Empty by default."
+    },
+    "recommend_for_use": {
+        "Description": "Whether the file is recommended for use. Empty until reviewed by an end-user.",
+        "Levels": {
+            "TRUE": "The file is recommended for use.",
+            "FALSE": "The file is not recommended for use."
+        }
+    },
+    "complete": {
+        "Description": "Whether the file was acquired at its complete, as-intended length. Empty until reviewed by an end-user.",
+        "Levels": {
+            "TRUE": "The acquisition is complete.",
+            "FALSE": "The acquisition is incomplete."
+        }
+    },
+    "usable": {
+        "Description": "Whether the file is usable at all. Empty until reviewed by an end-user.",
+        "Levels": {
+            "TRUE": "The file is usable.",
+            "FALSE": "The file is not usable."
+        }
+    },
+    "qc_rating": {
+        "Description": "Acquisition quality-control rating. Empty until reviewed by an end-user.",
+        "Levels": {
+            "PASS": "The acquisition passed quality control.",
+            "FAIL": "The acquisition failed quality control.",
+            "UNCERTAIN": "The quality-control outcome is uncertain."
+        }
+    },
+    "rating_reason": {
+        "Description": "Free-text reason for the qc_rating, open to any string of any length. Empty by default."
+    },
+    "qc_notes": {
+        "Description": "Free-text notes about the quality control not captured by other fields, open to any string of any length. Empty by default."
+    },
+    "participant_id": {
+        "Description": "BIDS participant identifier (sub-<label>) parsed from the filename."
+    },
+    "session_id": {
+        "Description": "BIDS session identifier (ses-<label>) parsed from the filename."
+    },
+    "datatype": {
+        "Description": "BIDS datatype, taken from the name of the file's parent directory (e.g. anat, func, dwi, fmap)."
+    },
+    "task": {
+        "Description": "The task-<label> entity parsed from the filename, including the task- prefix (e.g. task-rest). Empty when the entity is absent."
+    },
+    "acquisition": {
+        "Description": "The acq-<label> entity parsed from the filename, including the acq- prefix (e.g. acq-highres). Empty when the entity is absent."
+    },
+    "echo": {
+        "Description": "The echo-<index> entity parsed from the filename, including the echo- prefix (e.g. echo-1). Empty when the entity is absent."
+    },
+    "run": {
+        "Description": "The run-<index> entity parsed from the filename, including the run- prefix (e.g. run-2). Empty when the entity is absent."
+    },
+    "suffix": {
+        "Description": "BIDS suffix, the portion of the basename after the last underscore and before the extension. Never empty."
+    }
+}

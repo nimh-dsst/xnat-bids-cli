@@ -6,6 +6,7 @@ from .bidsprep import bidsprep_cmd
 from .cubids import cubids_cmd
 from .download import download_cmd
 from .login import login_cmd
+from .map import map_cmd
 from .query import query_cmd
 
 
@@ -306,6 +307,30 @@ def build_parser() -> argparse.ArgumentParser:
         "INPUT_DIR/PROJECT-<PROJECT>_cubids/log/cubids_<YYYYMMDD_HHMMSS>_log.csv.",
     )
     cubids_parser.set_defaults(func=cubids_cmd)
+
+    map_parser = subparsers.add_parser(
+        "map",
+        help="Generate (or update) a participant/session map TSV for a BIDS "
+        "dataset at INPUT_DIR/PROJECT/.",
+    )
+    map_parser.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        metavar="INPUT_DIR",
+        help="BIDS root directory holding the dataset at INPUT_DIR/PROJECT/ "
+        "(i.e., the output of `xnatcli bidsconvert`). The map TSV is written "
+        "here as PROJECT-<PROJECT>_map.tsv.",
+    )
+    map_parser.add_argument(
+        "-p",
+        "--project",
+        required=True,
+        metavar="PROJECT",
+        help="Project directory name under INPUT_DIR identifying the BIDS "
+        "dataset to scan for participants and sessions.",
+    )
+    map_parser.set_defaults(func=map_cmd)
 
     return parser
 

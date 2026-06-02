@@ -6,6 +6,8 @@ dependencies = [
     "cubids>=1.2.1",
     "dcm2bids>=3",
     "dcm2niix>=1.0.20260416",
+    "nibabel>=5.4.2",
+    "pandas>=2,<2.4",
     "pydicom>=2.4",
     "pyxnat>=1.6",
 ]
@@ -20,10 +22,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/xnatcli"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/assets" = "xnatcli/assets"
+
 [dependency-groups]
 dev = [
-    "nibabel>=5.4.2",
-    "pandas>=2,<2.4",
     "ruff>=0.15.4",
 ]
 
