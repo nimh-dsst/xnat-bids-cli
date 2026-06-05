@@ -1,6 +1,7 @@
 # specifics
 data/
 uv.lock
+biopac*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

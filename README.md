@@ -4,11 +4,11 @@ A command-line interface for logging into an Extensible Neuroimaging Archive Too
 
 ## Contents
 
-- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`, `xnatcli bidsprep`, `xnatcli bidsconvert`, `xnatcli cubids`, `xnatcli map`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
+- [`src/xnatcli/`](src/xnatcli/) — installable package that provides the `xnatcli` CLI (`xnatcli login`, `xnatcli download`, `xnatcli query`, `xnatcli bidsprep`, `xnatcli bidsconvert`, `xnatcli cubids`, `xnatcli map`, `xnatcli physio`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
 
 ## Setup
 
-The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependencies: `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`), `pydicom`, `cubids`, `nibabel` (used to read NIfTI shapes for the `bidsconvert` `scans.tsv`), `pandas` (used by `map`).
+The project uses [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11. Runtime dependencies: `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`), `pydicom`, `cubids`, `nibabel` (used to read NIfTI shapes for the `bidsconvert` `scans.tsv`), `pandas` (used by `map`), and `phys2bids` (used by `physio` to read physiological recordings and write BIDS physio files; see the note under [`xnatcli physio`](#xnatcli-physio) about its `numpy` pin). `bioread` is also pulled in for `phys2bids` to read BIOPAC `.acq` files (phys2bids imports it lazily but does not depend on it directly).
 
 ```bash
 uv sync
@@ -29,6 +29,7 @@ The package is organized as:
 - [`src/xnatcli/bidsconvert.py`](src/xnatcli/bidsconvert.py) — converts downloaded XNAT sessions to BIDS via `dcm2bids`.
 - [`src/xnatcli/cubids.py`](src/xnatcli/cubids.py) — runs [`CuBIDS`](https://cubids.readthedocs.io/) `add-nifti-info` and `group` on a BIDS dataset.
 - [`src/xnatcli/map.py`](src/xnatcli/map.py) — generates/updates a participant/session mapping TSV for a BIDS dataset (uses [`pandas`](https://pandas.pydata.org/)).
+- [`src/xnatcli/physio.py`](src/xnatcli/physio.py) — converts physiological recordings found under a directory tree to BIDS physio files (uses [`phys2bids`](https://phys2bids.readthedocs.io/)).
 
 Credentials live in `~/.xnatcli/credentials.cfg`, a plain-text [configparser](https://docs.python.org/3/library/configparser.html) file with a single `[xnatcli]` section storing `server`, `username`, and `password`. The file is created via `os.open` with mode `0o600` and re-`chmod`-ed to `0o600` after writing so only the owner can read or write it. (On Windows, `os.chmod` only toggles the read-only bit — the permissions model there is ACL-based; the `0o600` call still runs for portability.)
 
@@ -47,6 +48,41 @@ xnatcli login
 ```
 
 Re-running `xnatcli login` overwrites the stored credentials.
+
+## `xnatcli query`
+
+Writes a CSV of one row per experiment — every experiment in a project, or every experiment under a single subject in a project. The columns are:
+
+| Column | Source |
+| --- | --- |
+| `PROJECT` | Canonical XNAT project ID. |
+| `SUBJECT_LABEL` | User-facing subject label (e.g., `sub-001`). Used by downstream commands and on-disk paths. |
+| `SUBJECT_ID` | XNAT accession ID for the subject (e.g., `XNAT_S00001`). |
+| `EXPERIMENT_LABEL` | User-facing experiment label (e.g., `ses-baseline`). Used by downstream commands and on-disk paths. |
+| `EXPERIMENT_ID` | XNAT accession ID for the experiment (e.g., `XNAT_E00001`). |
+| `EXPERIMENT_DATE` | Experiment date in `YYYYMMDD` format. Empty if unset on the server or unparseable. |
+
+> **Note:** XNAT enforces label uniqueness within a project for both subjects and experiments. If a server somehow contains duplicate labels, the resulting CSV may contain rows that downstream commands cannot disambiguate.
+
+1. Loads credentials from `~/.xnatcli/credentials.cfg`; if the file is missing or incomplete, exits with a message telling you to run `xnatcli login`.
+2. Connects to the stored server via PyXNAT.
+3. Verifies the project exists (and the subject, if provided); exits with an error if not.
+4. Iterates subjects and experiments and writes one row per experiment with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE`. If the project (or subject) exists but has no experiments, a header-only CSV is written. An existing output file is overwritten silently.
+
+```bash
+xnatcli query PROJECT [SUBJECT] -o OUTPUT_DIR
+```
+
+The output filename is:
+
+- `OUTPUT_DIR/PROJECT-<PROJECT>.csv` when only `PROJECT` is supplied.
+- `OUTPUT_DIR/PROJECT-<PROJECT>_SUBJECT-<SUBJECT>.csv` when both positional arguments are supplied.
+
+| Argument | Description |
+| --- | --- |
+| `PROJECT` | XNAT project (ID or label). |
+| `SUBJECT` | *Optional.* XNAT subject (ID or label). If omitted, all subjects in the project are listed. |
+| `-o`, `--output` | **Required.** Directory to write the CSV file into (created if missing). |
 
 ## `xnatcli download`
 
@@ -102,41 +138,6 @@ DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS
 ```
 
 `DATESTAMP` is the per-experiment download attempt begin time, formatted to match Python's `logging` module default `asctime` (`YYYY-MM-DD HH:MM:SS,mmm`, local time). One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
-
-## `xnatcli query`
-
-Writes a CSV of one row per experiment — every experiment in a project, or every experiment under a single subject in a project. The columns are:
-
-| Column | Source |
-| --- | --- |
-| `PROJECT` | Canonical XNAT project ID. |
-| `SUBJECT_LABEL` | User-facing subject label (e.g., `sub-001`). Used by downstream commands and on-disk paths. |
-| `SUBJECT_ID` | XNAT accession ID for the subject (e.g., `XNAT_S00001`). |
-| `EXPERIMENT_LABEL` | User-facing experiment label (e.g., `ses-baseline`). Used by downstream commands and on-disk paths. |
-| `EXPERIMENT_ID` | XNAT accession ID for the experiment (e.g., `XNAT_E00001`). |
-| `EXPERIMENT_DATE` | Experiment date in `YYYYMMDD` format. Empty if unset on the server or unparseable. |
-
-> **Note:** XNAT enforces label uniqueness within a project for both subjects and experiments. If a server somehow contains duplicate labels, the resulting CSV may contain rows that downstream commands cannot disambiguate.
-
-1. Loads credentials from `~/.xnatcli/credentials.cfg`; if the file is missing or incomplete, exits with a message telling you to run `xnatcli login`.
-2. Connects to the stored server via PyXNAT.
-3. Verifies the project exists (and the subject, if provided); exits with an error if not.
-4. Iterates subjects and experiments and writes one row per experiment with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE`. If the project (or subject) exists but has no experiments, a header-only CSV is written. An existing output file is overwritten silently.
-
-```bash
-xnatcli query PROJECT [SUBJECT] -o OUTPUT_DIR
-```
-
-The output filename is:
-
-- `OUTPUT_DIR/PROJECT-<PROJECT>.csv` when only `PROJECT` is supplied.
-- `OUTPUT_DIR/PROJECT-<PROJECT>_SUBJECT-<SUBJECT>.csv` when both positional arguments are supplied.
-
-| Argument | Description |
-| --- | --- |
-| `PROJECT` | XNAT project (ID or label). |
-| `SUBJECT` | *Optional.* XNAT subject (ID or label). If omitted, all subjects in the project are listed. |
-| `-o`, `--output` | **Required.** Directory to write the CSV file into (created if missing). |
 
 ## `xnatcli bidsprep`
 
@@ -195,6 +196,7 @@ With `-d/--delete`, every `*.nii.gz` file in each experiment's helper subdir (`O
 | `-n`, `--nprep` | *Optional.* Number of parallel dcm2bids_helper invocations, one per experiment per worker (default `1`). |
 | `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/bidsprep_<YYYYMMDD_HHMMSS>_log.csv`. |
 | `-d`, `--delete` | *Optional.* After each experiment's helper run, delete `*.nii.gz` from its `tmp_dcm2bids/helper/<EXPERIMENT>/` subdir. JSON sidecars are kept. |
+| `-m`, `--maps` | *Optional.* Skip running `dcm2bids_helper` and only (re)draft the config from the helper JSON sidecars already under `OUTPUT_DIR/PROJECT-<PROJECT>_bidsprep/`. `dcm2bids_helper`/`dcm2niix` are not required. |
 
 ## `xnatcli bidsconvert`
 
@@ -243,10 +245,11 @@ Exit code is `0` if every processed session is `COMPLETE` or `EMPTY`, and `1` ot
 | `-s`, `--subject PROJECT SUBJECT` | Convert all sessions of one subject. |
 | `-p`, `--project PROJECT` | Convert all sessions of all subjects in a project. |
 | `-o`, `--output` | **Required.** Directory under which `PROJECT/sub-X/ses-Y/` is written. |
-| `-c`, `--config` | **Required.** Path to the `dcm2bids` config JSON (typically the one drafted by `xnatcli bidsprep`). |
+| `-c`, `--config` | **Required** unless `-m/--maps` is given. Path to the `dcm2bids` config JSON (typically the one drafted by `xnatcli bidsprep`). |
 | `-n`, `--nconvert` | *Optional.* Number of parallel session conversions (default `1`). |
 | `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/bidsconvert_<YYYYMMDD_HHMMSS>_log.csv`. |
 | `-d`, `--delete` | *Optional.* After a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, delete its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT`. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |
+| `-m`, `--maps` | *Optional.* Skip the `dcm2bids` conversion and only (re)generate `scans.tsv` (and copy `scans.json`) for every project in scope from the already-converted BIDS data under `OUTPUT_DIR`. `-c/--config`, `pydicom`, `dcm2bids`, and `dcm2niix` are not required. |
 
 ### Root-level `scans.tsv`
 
@@ -328,3 +331,64 @@ For example, if the BIDS dataset lives at `/data/bids/MYPROJ/`, then `xnatcli ma
 | --- | --- |
 | `-i`, `--input` | **Required.** BIDS root directory holding the dataset at `INPUT_DIR/PROJECT/`. The map TSV is written here as `PROJECT-<PROJECT>_map.tsv`. |
 | `-p`, `--project` | **Required.** Project directory name under `INPUT_DIR` identifying the BIDS dataset to scan. |
+
+## `xnatcli physio`
+
+Walks a directory tree for physiological recordings and converts each one to [BIDS physiological recordings](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/physiological-recordings.html) (`_physio.tsv.gz` + `_physio.json`) inside a BIDS project directory, using [`phys2bids`](https://phys2bids.readthedocs.io/) (imported as a Python library) to read the files and write the BIDS output.
+
+1. Validates `--input` and creates `--output` if missing; exits with a message if `phys2bids` is unavailable.
+2. Recursively finds every file whose extension `phys2bids` supports (`.acq`, `.txt`, `.mat`, `.gep`, `.smr`; case-insensitive) under `--input`, skipping anything already inside `--output`.
+3. **Validates that each match is really physiological data** by loading it with the matching `phys2bids` loader — not just trusting the extension. Files that fail to load (e.g. a stray `.txt` that is not a recording) are reported as `NOT_PHYSIO` and skipped.
+4. Writes/updates a `physio_map.tsv` at the `--output` root, one row per validated physio file. The BIDS entity columns (`participant_id`, `session_id`, `task_id`, `acquisition_id`, `run_id`, `datatype`) are best-guesses parsed from the input file's basename, split on underscores:
+   - **`participant_id`** — the first token (filenames are expected to start with the participant label), written as `sub-<token>` (sanitized to alphanumerics).
+   - **`session_id`** — the acquisition date (found among the tokens after the participant — it need not sit immediately after it), emitted as `ses-YYYYMMDD`. Four formats are recognized, in order: Format 1 `DDMMMYY` (e.g. `23May18` → `20180523`, with `20` assumed as the century); Format 2 `YYYYMMDD` (used as-is); Format 3 `MMDDYYYY` and Format 4 `DDMMYYYY` (year last), disambiguated only when exactly one of the two leading pairs exceeds 12. The less common `YYYY-MM-DDTHH_MM_SS` form is checked last. **The parsed date is verified against the file's last-modified date** (see `DATES_DISAGREE` below); when there is no date token, or the `MMDD`/`DDMM` order is ambiguous, the last-modified date is used.
+   - **`run_id`** — a trailing 4-digit run number becomes a zero-padded 2-digit `run-` entity (e.g. `0000` → `run-00`, `0012` → `run-12`).
+   - **Missing underscores** are handled for the date and run: a token that glues a date to a trailing 4-digit run is split first, so e.g. `RPD123_050620260000` parses as `sub-RPD123` + date `05062026` + `run-00` (likewise `23May180000` → `23May18` + `run-00`). This keeps the date and run out of `acquisition_id`. (The participant ID is otherwise expected to be the first underscore-delimited token.)
+   - **Fully concatenated names** (no underscores at all) are split when they contain an embedded `DDMMMYY` date — its 3-letter month is an unambiguous anchor: text before the date is the ID and text after is the run. For example `RPD12309Oct190003` → `sub-RPD123` + date `09Oct19` (`20191009`) + `run-03`. Fully-numeric concatenations are **not** split this way (there is no reliable ID/date boundary when the ID also contains digits).
+   - **`acquisition_id`** — any remaining tokens (those that are neither the participant, the date, nor the run) are concatenated, sanitized, and written as `acq-<label>`.
+   - **`datatype`** is not encoded in filenames, so it defaults to `func`; change it in the map for non-functional recordings.
+
+   Existing user edits in `physio_map.tsv` take precedence over these guesses. The map's only regenerated column is `status` (refreshed every run); the per-file metrics, including the converted output path(s), live in `physio_qc.tsv` (below).
+5. Runs the `phys2bids` workflow into a temporary directory for **every** validated physio file, then relocates its `.tsv.gz`/`.json` output(s). The JSON sidecar (with `SamplingFrequency`, `StartTime`, `Columns`) is produced by `phys2bids` and carried over as-is.
+   - **Resolved files** (`participant_id` filled) are moved into `<output>/sub-<P>/[ses-<S>/]<datatype>/`, renamed to the BIDS basename built from the map's entities, with `status=CONVERTED`. `task_id`, `session_id`, `acquisition_id`, and `run_id` are optional — when blank, that entity is simply omitted from the name.
+   - **Unresolved files** (`participant_id` blank — i.e. the filename did not start with a participant label) are instead moved into `<output>/tmp_phys2bids/` keeping the input file's basename (the default name `phys2bids` assigns), with `status=UNKNOWN_NAME`. The layout there is flat; if two inputs share a basename, a `_1`, `_2`, … suffix is appended so nothing is overwritten. The original path (`source_path`) is recorded in both TSVs and the converted path (`output_files`) in `physio_qc.tsv` (and per-output as `DESTINATION_PATH` in the log).
+   - **Nothing is ever overwritten.** If a resolved file's BIDS name already exists (e.g. two recordings map to the same entities), a zero-padded `run-` entity is added (or an existing one incremented) until the name is free. A file's own outputs from a previous run are cleared first, so re-running is idempotent.
+6. `phys2bids` automatically splits a recording whose channels have different sampling frequencies into one output file per frequency; for resolved files each such file is given a `recording-<label>` entity (the `<freq>Hz` suffix `phys2bids` assigns).
+7. Writes/updates a **`physio_qc.tsv`** alongside the map (same `source_path` index key and `status` column), holding the per-file metrics regenerated every run: `n_channels` (channel count, including the time channel), `sampling_frequencies` (unique channel frequencies in Hz, ascending), `output_files` (converted `_physio.tsv.gz` path(s)), `sample_count` (samples per frequency), and `duration_seconds` (acquisition length in seconds at 0.001 s precision, `sample_count / sampling_frequency`). `sampling_frequencies`, `sample_count`, and `duration_seconds` are comma-separated and aligned position-by-position, so a recording split across frequencies reports one entry per frequency in each. It contains the same rows as the map (one per `source_path`, including non-physio/missing files, with blank metrics).
+8. Copies the static data dictionaries [`src/assets/physio_map.json`](src/assets/physio_map.json) and [`src/assets/physio_qc.json`](src/assets/physio_qc.json) into the `--output` root as `physio_map.json` and `physio_qc.json`, describing each TSV's columns.
+
+**Fill in the blank entity columns in `physio_map.tsv` and re-run** to place the `UNKNOWN_NAME` files under their proper BIDS path — user edits are preserved across runs, and once a file is placed correctly its earlier `tmp_phys2bids/` copy is deleted.
+
+```bash
+# Serial
+xnatcli physio -i PHYSIO_DIR -o BIDS_PROJECT_DIR
+
+# 4 files converted in parallel
+xnatcli physio -i PHYSIO_DIR -o BIDS_PROJECT_DIR -n 4
+```
+
+With `-n/--nphysio` > 1, the `phys2bids` conversions run in parallel across separate **processes** (real parallelism, since `phys2bids` is an in-process Python library rather than an external command). The conversions run in workers, but all BIDS naming, collision/`run-` numbering, the `physio_map.tsv`, and the log are written **serially in the main process**, and placement is drained in **sorted source-path order** (out-of-order completions are buffered until their turn). So results are fully deterministic and identical to a serial run, including which of two name-colliding files keeps the unnumbered name and which gets `run-NN` (the sorted-earlier source path wins) — regardless of `-n`.
+
+### Per-file STATUS (and exit code)
+
+| STATUS | Meaning |
+| --- | --- |
+| `CONVERTED` | `phys2bids` read the file and its `_physio.tsv.gz`/`.json` file(s) were written to the proper BIDS path. |
+| `UNKNOWN_NAME` | The file is valid physio but `participant_id` is blank (the filename did not start with a participant label), so it was converted into `<output>/tmp_phys2bids/` under its input basename. Fill in `participant_id` in `physio_map.tsv` and re-run to place it properly (the `tmp_phys2bids/` copy is removed then). |
+| `DATES_DISAGREE` | The file converted to its proper BIDS path, but the date parsed from its filename disagrees with its last-modified date. The **last-modified date** was used for `session_id`; review and set `session_id` in `physio_map.tsv` if the filename date is the correct one. |
+| `NOT_PHYSIO` | The file matched a supported extension but could not be loaded as physiological data (so it is not added to the map, unless a prior row exists to preserve). |
+| `READER_MISSING` | The optional reader package `phys2bids` needs for this format is not installed (e.g. `bioread` for `.acq`, `scipy` for `.mat`, `sonpy` for `.smr`). This is an environment problem, not a data problem — install the package and re-run. |
+| `CONVERT_ERROR` | `phys2bids` raised while converting, or produced no `.tsv.gz` output. |
+| `MISSING` | A file present in a prior `physio_map.tsv` is no longer found under `--input`; its row (and any edits) is preserved. |
+
+Exit code is `1` if any file is `CONVERT_ERROR` or `READER_MISSING`, and `0` otherwise. (`UNKNOWN_NAME` and `DATES_DISAGREE` are not errors — those files are converted, just awaiting proper naming or a date review.)
+
+| Argument | Description |
+| --- | --- |
+| `-i`, `--input` | **Required.** Root directory walked recursively for `phys2bids`-supported physio files (`.acq`/`.txt`/`.mat`/`.gep`/`.smr`). |
+| `-o`, `--output` | **Required.** BIDS project directory to write physio files into; `physio_map.tsv`, `physio_qc.tsv`, and their `.json` data dictionaries are written/updated at its root. |
+| `-n`, `--nphysio` | *Optional.* Number of physio files to convert in parallel, one `phys2bids` conversion per process (default `1`). |
+| `-l`, `--log` | *Optional.* Write a per-file log CSV to `OUTPUT_DIR/log/physio_<YYYYMMDD_HHMMSS>_log.csv` (header `DATESTAMP,SOURCE_PATH,STATUS,DESTINATION_PATH`). One row per processed file, except a converted file that produced several outputs emits one row per output (each with its own `DESTINATION_PATH`); files with no output get a single blank-`DESTINATION_PATH` row. Off by default. |
+| `-m`, `--maps` | *Optional.* Skip the `phys2bids` conversion and only (re)generate `physio_map.tsv`/`physio_qc.tsv` (and copy their `.json` data dictionaries). Each file is still re-read to recompute its metrics and entities, but the converted output paths are carried over from the existing `physio_qc.tsv` rather than re-written. (`phys2bids` itself is still needed to read the files.) |
+
+> **Note:** `phys2bids` 2.10.0 caps `numpy` at `<1.24`, which conflicts with `nibabel`'s `numpy>=1.25` requirement. Because `phys2bids` does not actually use any `numpy` APIs removed in 1.24+, `pyproject.toml` carries a `[tool.uv] override-dependencies = ["numpy>=1.25,<2"]` so the whole stack shares one `numpy` (held on the 1.x series, which predates `numpy` 2.0).

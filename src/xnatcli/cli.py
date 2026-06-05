@@ -7,6 +7,7 @@ from .cubids import cubids_cmd
 from .download import download_cmd
 from .login import login_cmd
 from .map import map_cmd
+from .physio import physio_cmd
 from .query import query_cmd
 
 
@@ -181,6 +182,15 @@ def build_parser() -> argparse.ArgumentParser:
         "right after dcm2bids_helper returns, regardless of STATUS. JSON "
         "sidecars (used by the config draft) are kept.",
     )
+    bidsprep_parser.add_argument(
+        "-m",
+        "--maps",
+        action="store_true",
+        help="Skip running dcm2bids_helper; only (re)draft the dcm2bids config "
+        "from the existing helper JSON sidecars already under "
+        "OUTPUT_DIR/PROJECT-<PROJECT>_bidsprep/. dcm2bids_helper and dcm2niix "
+        "are not required with this option.",
+    )
     bidsprep_parser.set_defaults(func=bidsprep_cmd)
 
     bidsconvert_parser = subparsers.add_parser(
@@ -234,10 +244,9 @@ def build_parser() -> argparse.ArgumentParser:
     bidsconvert_parser.add_argument(
         "-c",
         "--config",
-        required=True,
         metavar="CONFIG_FILE",
         help="Path to the dcm2bids config JSON to use (e.g., the one drafted "
-        "by `xnatcli bidsprep`).",
+        "by `xnatcli bidsprep`). Required unless -m/--maps is given.",
     )
     bidsconvert_parser.add_argument(
         "-n",
@@ -275,6 +284,15 @@ def build_parser() -> argparse.ArgumentParser:
         "runs after a successful archive regardless of conversion status. "
         "The SUBJECT and PROJECT parent directories are also removed if "
         "they become empty.",
+    )
+    bidsconvert_parser.add_argument(
+        "-m",
+        "--maps",
+        action="store_true",
+        help="Skip the dcm2bids conversion; only (re)generate scans.tsv (and "
+        "copy scans.json) for every project in scope from the already-converted "
+        "BIDS data under OUTPUT_DIR. -c/--config, pydicom, dcm2bids, and "
+        "dcm2niix are not required with this option.",
     )
     bidsconvert_parser.set_defaults(func=bidsconvert_cmd)
 
@@ -331,6 +349,56 @@ def build_parser() -> argparse.ArgumentParser:
         "dataset to scan for participants and sessions.",
     )
     map_parser.set_defaults(func=map_cmd)
+
+    physio_parser = subparsers.add_parser(
+        "physio",
+        help="Convert physiological recordings found under a directory tree to "
+        "BIDS physio files via phys2bids.",
+    )
+    physio_parser.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        metavar="INPUT_DIR",
+        help="Root directory to walk recursively for phys2bids-supported "
+        "physio files (.acq/.txt/.mat/.gep/.smr).",
+    )
+    physio_parser.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        metavar="OUTPUT_DIR",
+        help="BIDS project directory to write physio files into. A "
+        "physio_map.tsv (source path and best-guess BIDS entities) and a "
+        "physio_qc.tsv (per-file metrics), each with a .json data dictionary, "
+        "are written/updated at its root.",
+    )
+    physio_parser.add_argument(
+        "-n",
+        "--nphysio",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of physio files to convert in parallel, one phys2bids "
+        "conversion per process (default 1).",
+    )
+    physio_parser.add_argument(
+        "-l",
+        "--log",
+        action="store_true",
+        help="Write a per-file log CSV to "
+        "OUTPUT_DIR/log/physio_<YYYYMMDD_HHMMSS>_log.csv.",
+    )
+    physio_parser.add_argument(
+        "-m",
+        "--maps",
+        action="store_true",
+        help="Skip the phys2bids conversion; only (re)generate physio_map.tsv "
+        "and physio_qc.tsv (and copy their JSON data dictionaries) by re-reading "
+        "each physio file's metrics and entities, preserving the converted "
+        "output paths from the existing physio_qc.tsv.",
+    )
+    physio_parser.set_defaults(func=physio_cmd)
 
     return parser
 

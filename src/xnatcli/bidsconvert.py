@@ -508,11 +508,29 @@ def bidsconvert_cmd(args: argparse.Namespace) -> int:
     if not input_root.is_dir():
         sys.exit(f"Error: input directory not found: {input_root}")
 
+    output_dir = Path(args.output).resolve()
+
+    # --maps: skip the dcm2bids conversion entirely and only (re)generate the
+    # scans.tsv/scans.json tabular outputs for every project in scope from the
+    # already-converted BIDS data under OUTPUT_DIR. The config, pydicom, and the
+    # dcm2bids/dcm2niix tools are unused on this path, so none are required.
+    if args.maps:
+        if not output_dir.is_dir():
+            sys.exit(
+                f"Error: output directory not found: {output_dir}; run "
+                "bidsconvert without -m/--maps first."
+            )
+        sessions = _discover_sessions(input_root, args)
+        for project in sorted({p for p, _, _ in sessions}):
+            _generate_scans_tsv(output_dir / project)
+        return 0
+
+    if args.config is None:
+        sys.exit("Error: -c/--config is required unless -m/--maps is given.")
     config_path = Path(args.config).resolve()
     if not config_path.is_file():
         sys.exit(f"Error: config file not found: {config_path}")
 
-    output_dir = Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:

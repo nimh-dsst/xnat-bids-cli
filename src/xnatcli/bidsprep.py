@@ -432,15 +432,27 @@ def bidsprep_cmd(args: argparse.Namespace) -> int:
     if not input_root.is_dir():
         sys.exit(f"Error: input directory not found: {input_root}")
 
-    helper_path = _require_tool("dcm2bids_helper")
-    _require_tool("dcm2niix")
-
     experiments = _discover_experiments(input_root, args)
     project = experiments[0][0]
 
     output_dir = Path(args.output).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
     target = output_dir / f"PROJECT-{project}_bidsprep"
+
+    # --maps: skip running dcm2bids_helper and only (re)draft the dcm2bids config
+    # from the helper JSON sidecars already present under <target>. The helper
+    # and dcm2niix tools are unused on this path, so neither is required.
+    if args.maps:
+        if not target.is_dir():
+            sys.exit(
+                f"Error: bidsprep output directory not found: {target}; run "
+                "bidsprep without -m/--maps first."
+            )
+        _draft_config(target)
+        return 0
+
+    helper_path = _require_tool("dcm2bids_helper")
+    _require_tool("dcm2niix")
+    output_dir.mkdir(parents=True, exist_ok=True)
     target.mkdir(parents=True, exist_ok=True)
 
     log_path: Path | None = None

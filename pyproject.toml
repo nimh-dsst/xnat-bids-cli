@@ -3,11 +3,13 @@ name = "xnatcli"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "bioread>=3",
     "cubids>=1.2.1",
     "dcm2bids>=3",
     "dcm2niix>=1.0.20260416",
     "nibabel>=5.4.2",
     "pandas>=2,<2.4",
+    "phys2bids>=2.10",
     "pydicom>=2.4",
     "pyxnat>=1.6",
 ]
@@ -18,6 +20,13 @@ xnatcli = "xnatcli.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# phys2bids 2.10.0 caps numpy at <1.24, but nibabel>=5.4.2 needs numpy>=1.25.
+# phys2bids' own source uses no numpy APIs removed in 1.24+, so we override its
+# upper bound. We hold numpy at the 1.x series (phys2bids predates numpy 2.x)
+# while still satisfying nibabel, letting the whole stack share one numpy.
+[tool.uv]
+override-dependencies = ["numpy>=1.25,<2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/xnatcli"]
