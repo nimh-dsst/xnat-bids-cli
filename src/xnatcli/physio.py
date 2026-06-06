@@ -697,6 +697,92 @@ def _place_staged(
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _recording_of(rel_out: str, base_stem: str, index: int) -> str:
+    """Recover the ``recording-`` label of a prior multi-frequency output.
+
+    Used when relocating already-converted files in maps mode so each
+    per-frequency output keeps the same ``recording-<freq>Hz`` label it was first
+    given. Proper-BIDS outputs embed it as ``recording-<label>``; tmp_phys2bids
+    outputs keep phys2bids' ``<base>_<freq>Hz`` stem. Falls back to ``rec<N>`` if
+    neither form is recognizable.
+    """
+    stem = Path(rel_out).name
+    if stem.endswith(".tsv.gz"):
+        stem = stem[: -len(".tsv.gz")]
+    m = re.search(rf"_recording-([A-Za-z0-9]+)_{_SUFFIX}$", stem)
+    if m:
+        return m.group(1)
+    if stem.endswith(f"_{_SUFFIX}"):
+        stem = stem[: -(len(_SUFFIX) + 1)]
+    return _recording_label(stem, base_stem, index)
+
+
+def _prune_empty_dirs(start: Path, stop: Path) -> None:
+    """Remove ``start`` and any empty parents up to (not including) ``stop``.
+
+    Called after a relocation so a now-emptied ``sub-X/ses-Y/<datatype>/`` (or
+    ``tmp_phys2bids/``) directory does not linger once its files move elsewhere.
+    """
+    current = start
+    while current != stop and stop in current.parents:
+        try:
+            current.rmdir()  # succeeds only if the directory is empty
+        except OSError:
+            break
+        current = current.parent
+
+
+def _relocate_existing_outputs(
+    prior_outputs: list[str],
+    output_dir: Path,
+    entities: dict[str, str],
+    name_known: bool,
+    base_stem: str,
+) -> tuple[str, list[str], str | None]:
+    """Move already-converted outputs to match edited physio_map.tsv entities.
+
+    Maps-mode counterpart to ``_place_staged``: instead of re-running phys2bids,
+    it relocates the ``.tsv.gz``/``.json`` pair(s) a source produced on an
+    earlier run to the BIDS path implied by the (possibly user-edited) entities.
+    Each prior output is moved into a fresh staging directory under a
+    reconstructed phys2bids-style stem (so its ``recording-`` label survives),
+    then handed to ``_place_staged``, which reuses the exact naming, collision/
+    run-number, and tmp_phys2bids logic of a fresh conversion. Emptied source
+    directories are pruned afterward. Returns ``(status, written_relpaths,
+    detail)``; when none of the prior files are still on disk, returns the
+    entity-derived status with no outputs (nothing to move).
+    """
+    staging = Path(tempfile.mkdtemp(prefix="xnatcli_phys2bids_maps_"))
+    multi = len(prior_outputs) > 1
+    old_parents: set[Path] = set()
+    staged_any = False
+    for index, rel_out in enumerate(prior_outputs):
+        src_tsv = output_dir / rel_out
+        old_parents.add(src_tsv.parent)
+        if not src_tsv.is_file():
+            continue
+        # Rebuild the phys2bids stem so _place_staged re-derives the same label.
+        stem = f"{base_stem}_{_recording_of(rel_out, base_stem, index)}" if multi else base_stem
+        shutil.move(str(src_tsv), str(staging / f"{stem}.tsv.gz"))
+        json_src = src_tsv.with_name(src_tsv.name[: -len(".tsv.gz")] + ".json")
+        if json_src.is_file():
+            shutil.move(str(json_src), str(staging / f"{stem}.json"))
+        staged_any = True
+
+    if not staged_any:
+        shutil.rmtree(staging, ignore_errors=True)
+        return (STATUS_CONVERTED if name_known else STATUS_UNKNOWN_NAME), [], None
+
+    # The prior outputs are already moved out of the BIDS tree, so pass no
+    # prior-output list (the source's own names cannot self-collide below).
+    status, written, detail = _place_staged(
+        staging, output_dir, entities, name_known, "", base_stem
+    )
+    for parent in old_parents:
+        _prune_empty_dirs(parent, output_dir)
+    return status, written, detail
+
+
 def _read_existing_map(map_path: Path) -> dict[str, dict[str, str]]:
     """Load an existing physio_map.tsv as full rows keyed by ``source_path``.
 
@@ -929,26 +1015,44 @@ def physio_cmd(args: argparse.Namespace) -> int:
         path = input_root / rel
         entities, date_info = _resolve_entities(rel, path, existing)
         if args.maps:
-            # Maps mode: no conversion happened, so derive the status from the
-            # entity state alone and carry the converted output paths forward
-            # from the existing physio_qc.tsv rather than from fresh placement.
-            written = [
+            # Maps mode: no conversion happens. Relocate the file's already-
+            # converted outputs to match the (possibly edited) entities, reusing
+            # the same placement logic as a fresh conversion.
+            prior = [
                 s.strip()
                 for s in existing_outputs.get(rel, "").split(",")
                 if s.strip()
             ]
             blocked = _blocked_reason(entities)
-            if blocked is not None:
-                status = STATUS_UNKNOWN_NAME
-                detail = f"{blocked}; not converted (maps mode)"
-            elif date_info["disagrees"] and not date_info["overridden"]:
+            if prior:
+                status, written, detail = _relocate_existing_outputs(
+                    prior, output_dir, entities, blocked is None, path.stem
+                )
+                if status == STATUS_UNKNOWN_NAME and detail is None:
+                    detail = f"{blocked}; moved under {_TMP_DIRNAME}/"
+            else:
+                # No prior outputs to move (e.g. an earlier CONVERT_ERROR or a
+                # file new since the last run); maps mode cannot convert, so only
+                # the entity-derived status is recorded.
+                written = []
+                if blocked is not None:
+                    status = STATUS_UNKNOWN_NAME
+                    detail = f"{blocked}; not converted (maps mode)"
+                else:
+                    status, detail = STATUS_CONVERTED, None
+            # A placed file whose filename date conflicts with its last-modified
+            # date (and was not overridden) is flagged for review, as in a
+            # full run.
+            if (
+                status == STATUS_CONVERTED
+                and date_info["disagrees"]
+                and not date_info["overridden"]
+            ):
                 status = STATUS_DATES_DISAGREE
                 detail = (
                     f"filename date {date_info['filename_date']} != file date "
                     f"{date_info['reference_date']}; used file date for session_id"
                 )
-            else:
-                status, detail = STATUS_CONVERTED, None
         elif result["convert_error"] is not None:
             status, written, detail = STATUS_CONVERT_ERROR, [], result["convert_error"]
         else:
