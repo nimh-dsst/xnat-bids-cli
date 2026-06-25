@@ -1,5 +1,9 @@
 # AGENTS
 
+## Overview
+
+This project is a command-line interface for logging into an Extensible Neuroimaging Archive Toolkit (XNAT) server, querying experiments and downloading files, then converting to the Brain Imaging Data Structure (BIDS) standard format.
+
 ## Always (for every prompt and follow-up)
 
 - Always ask clarifying questions if a request is unclear or if there are distinctly different performance or behavior expectations among possible solutions.
