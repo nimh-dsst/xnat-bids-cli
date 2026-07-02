@@ -348,6 +348,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Project directory name under INPUT_DIR identifying the BIDS "
         "dataset to scan for participants and sessions.",
     )
+    map_parser.add_argument(
+        "-o",
+        "--output",
+        metavar="OUTPUT_DIR",
+        help="When provided, apply all renames from PROJECT-<PROJECT>_map.tsv "
+        "(participant_rename, session_rename) and INPUT_DIR/PROJECT/scans.tsv "
+        "(rename column) by recursively copying the BIDS dataset to "
+        "OUTPUT_DIR/PROJECT/ with every rename applied. The map TSV generation "
+        "always runs first regardless. OUTPUT_DIR/PROJECT/ must not already "
+        "exist. Skips tmp_dcm2bids and tmp_phys2bids scratch directories.",
+    )
     map_parser.set_defaults(func=map_cmd)
 
     physio_parser = subparsers.add_parser(

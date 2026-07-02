@@ -312,7 +312,9 @@ For example, if you ran `xnatcli bidsconvert -i DOWNLOAD_DIR -p MYPROJ -o /data/
 
 ## `xnatcli map`
 
-Generates a participant/session mapping TSV for a BIDS dataset (the output of `xnatcli bidsconvert`, at `INPUT_DIR/PROJECT/`). The map is later filled in by hand to relate XNAT IDs and real dates to anonymized BIDS IDs and session codenames.
+Generates a participant/session mapping TSV for a BIDS dataset (the output of `xnatcli bidsconvert`, at `INPUT_DIR/PROJECT/`). The map is later filled in by hand to relate XNAT IDs and real dates to anonymized BIDS IDs and session codenames. When `-o OUTPUT_DIR` is provided, it additionally applies all filled-in renames by copying the BIDS dataset to a new directory tree.
+
+### Map TSV generation (always runs)
 
 1. Validates that `--input` exists and that the BIDS dataset `INPUT_DIR/PROJECT/` exists.
 2. Scans `INPUT_DIR/PROJECT/` for `sub-*` directories and, within each, `ses-*` subdirectories.
@@ -325,12 +327,36 @@ Generates a participant/session mapping TSV for a BIDS dataset (the output of `x
 xnatcli map -i BIDSCONVERT_OUTPUT_DIR -p PROJECT
 ```
 
-For example, if the BIDS dataset lives at `/data/bids/MYPROJ/`, then `xnatcli map -i /data/bids -p MYPROJ` writes `/data/bids/PROJECT-MYPROJ_map.tsv`.
+### Copy-with-rename (`-o OUTPUT_DIR`)
+
+When `-o` is provided, after updating the map TSV the command reads back the renames from two sources and writes a fully renamed copy of the BIDS dataset to `OUTPUT_DIR/PROJECT/`:
+
+- **`PROJECT-<PROJECT>_map.tsv`** — `participant_rename` and `session_rename` columns rename `sub-*` and `ses-*` directory names and the matching labels embedded in all filenames. Blank values mean "keep the original label."
+- **`INPUT_DIR/PROJECT/scans.tsv`** — the `rename` column supplies a corrected `bids_name` (the part after `sub-X_ses-Y_`) for individual `.nii.gz` files. Sidecar files (`.json`, `.bval`, `.bvec`) sharing the same stem are renamed to match. Blank values mean "keep the original bids_name."
+
+The copy also:
+
+- **QC filtering**: Files whose `scans.tsv` row has `recommend_for_use`, `complete`, or `usable` set to exactly `"FALSE"`, or `qc_rating` set to exactly `"FAIL"` or `"UNCERTAIN"`, are excluded from the copy (along with their `.json`/`.bval`/`.bvec` sidecars) and their rows are omitted from the output `scans.tsv`. Values in any of these columns that are non-empty but do not match a valid Level from `scans.json` (e.g. `"false"` instead of `"FALSE"`) generate an additional warning, since they are silently ignored by the filter.
+- Updates `participants.tsv` in the output with the renamed participant IDs.
+- Updates `scans.tsv` in the output (`filename`, `bids_name`, `participant_id`, `session_id` columns) to reflect all renames, clears the `rename` column (the rename has been applied), and omits rows for QC-excluded files. All other reviewer columns are preserved.
+- Skips `tmp_dcm2bids` and `tmp_phys2bids` scratch directories.
+- Errors and copies nothing if `OUTPUT_DIR/PROJECT/` already exists.
+- Warns loudly for any two source files that would map to the same destination path (neither is copied); all warnings are re-displayed together at the end.
+
+```bash
+xnatcli map -i BIDSCONVERT_OUTPUT_DIR -p PROJECT -o RENAMED_OUTPUT_DIR
+```
+
+For example, if the BIDS dataset lives at `/data/bids/MYPROJ/`, then:
+
+- `xnatcli map -i /data/bids -p MYPROJ` writes `/data/bids/PROJECT-MYPROJ_map.tsv`.
+- After filling in the rename columns, `xnatcli map -i /data/bids -p MYPROJ -o /data/renamed` copies the dataset to `/data/renamed/MYPROJ/` with all renames applied.
 
 | Argument | Description |
 | --- | --- |
 | `-i`, `--input` | **Required.** BIDS root directory holding the dataset at `INPUT_DIR/PROJECT/`. The map TSV is written here as `PROJECT-<PROJECT>_map.tsv`. |
 | `-p`, `--project` | **Required.** Project directory name under `INPUT_DIR` identifying the BIDS dataset to scan. |
+| `-o`, `--output` | *Optional.* When provided, copy the BIDS dataset to `OUTPUT_DIR/PROJECT/` with all renames from the map TSV and `scans.tsv` `rename` column applied. `OUTPUT_DIR/PROJECT/` must not already exist. |
 
 ## `xnatcli physio`
 
