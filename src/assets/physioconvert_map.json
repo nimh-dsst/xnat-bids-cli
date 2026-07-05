@@ -8,17 +8,17 @@
     "session_id": {
         "Description": "BIDS session identifier (ses-<label>) best-guessed from the acquisition date found among the filename tokens, falling back to the file's last-modified date. Editable; setting it resolves a DATES_DISAGREE flag."
     },
-    "task_id": {
-        "Description": "BIDS task entity (task-<label>). Not encoded in physio filenames, so blank by default; fill in to add it to the BIDS name. Editable."
-    },
-    "acquisition_id": {
-        "Description": "BIDS acquisition entity (acq-<label>) built from any filename tokens that are neither the participant, the date, nor the run. Editable."
-    },
-    "run_id": {
-        "Description": "BIDS run entity (run-<index>), zero-padded to two digits, parsed from a trailing 4-digit filename token. Editable."
-    },
     "datatype": {
         "Description": "BIDS datatype directory the recording is placed under (e.g. func). Not encoded in the filename, so it defaults to func; change it for non-functional recordings. Editable."
+    },
+    "task": {
+        "Description": "BIDS task entity (task-<label>). Not encoded in physio filenames, so blank by default; fill in to add it to the BIDS name. Editable."
+    },
+    "acquisition": {
+        "Description": "BIDS acquisition entity (acq-<label>) built from any filename tokens that are neither the participant, the date, nor the run. Editable."
+    },
+    "run": {
+        "Description": "BIDS run entity (run-<index>), zero-padded to two digits, parsed from a trailing 4-digit filename token. Editable."
     },
     "status": {
         "Description": "Per-file processing outcome, regenerated every run. Shared with physioconvert_qc.tsv and the log CSV.",

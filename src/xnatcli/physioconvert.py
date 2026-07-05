@@ -31,10 +31,10 @@ _SUPPORTED_EXTS = {".acq", ".txt", ".mat", ".gep", ".smr"}
 _EDITABLE_COLUMNS = [
     "participant_id",
     "session_id",
-    "task_id",
-    "acquisition_id",
-    "run_id",
     "datatype",
+    "task",
+    "acquisition",
+    "run",
 ]
 # physioconvert_map.tsv holds the editable BIDS entities plus the regenerated
 # status. The converted output path(s) live in physioconvert_qc.tsv (column
@@ -250,7 +250,7 @@ def _derive_entities(file_path: Path) -> tuple[dict[str, str], dict]:
     among the remaining tokens — it need not sit right after the participant —
     via ``_parse_filename_date`` (or the ISO fallback). A trailing 4-digit token
     becomes a zero-padded 2-digit ``run-`` entity, and anything left over goes
-    into ``acquisition_id``. ``datatype`` defaults to ``func`` (it is not encoded
+    into ``acquisition``. ``datatype`` defaults to ``func`` (it is not encoded
     in the name) and stays overridable in the map.
 
     ``session_id`` always falls back to the file's last-modified date when the
@@ -269,16 +269,16 @@ def _derive_entities(file_path: Path) -> tuple[dict[str, str], dict]:
     entities = {
         "participant_id": f"sub-{participant}" if participant else "",
         "session_id": "",
-        "task_id": "",
-        "acquisition_id": "",
-        "run_id": "",
         "datatype": "func",
+        "task": "",
+        "acquisition": "",
+        "run": "",
     }
 
     ref_date = _reference_date(file_path)
     # Split glued date+run tokens, then find the date anywhere in what remains
     # (it may follow an acquisition label), so neither the date nor the run is
-    # left to pollute acquisition_id.
+    # left to pollute acquisition.
     rest = [t for tok in tokens[1:] for t in _split_glued(tok)]
     filename_date: str | None = None
 
@@ -313,11 +313,11 @@ def _derive_entities(file_path: Path) -> tuple[dict[str, str], dict]:
 
     # Trailing 4-digit token is the run number; the rest is the acquisition.
     if rest and re.fullmatch(r"\d{4}", rest[-1]):
-        entities["run_id"] = f"run-{int(rest[-1]):02d}"
+        entities["run"] = f"run-{int(rest[-1]):02d}"
         rest = rest[:-1]
     acq_label = _NON_ALNUM.sub("", "".join(rest))
     if acq_label:
-        entities["acquisition_id"] = f"acq-{acq_label}"
+        entities["acquisition"] = f"acq-{acq_label}"
 
     date_info = {
         "filename_date": filename_date,
@@ -333,7 +333,7 @@ def _blocked_reason(entities: dict[str, str]) -> str | None:
     Only ``participant_id`` is mandatory: a file is staged under tmp_phys2bids
     (status ``UNKNOWN_NAME``) only when it is blank. ``session_id`` defaults to
     the file's last-modified date and ``datatype`` defaults to ``func``, so
-    those — along with the optional ``task_id``/``acquisition_id``/``run_id`` —
+    those — along with the optional ``task``/``acquisition``/``run`` —
     never block conversion.
     """
     if not entities["participant_id"]:
@@ -350,12 +350,12 @@ def _bids_basename(entities: dict[str, str], recording: str | None) -> str:
     parts = [entities["participant_id"]]
     if entities["session_id"]:
         parts.append(entities["session_id"])
-    if entities["task_id"]:
-        parts.append(entities["task_id"])
-    if entities["acquisition_id"]:
-        parts.append(entities["acquisition_id"])
-    if entities["run_id"]:
-        parts.append(entities["run_id"])
+    if entities["task"]:
+        parts.append(entities["task"])
+    if entities["acquisition"]:
+        parts.append(entities["acquisition"])
+    if entities["run"]:
+        parts.append(entities["run"])
     if recording:
         parts.append(f"recording-{recording}")
     return "_".join(parts) + f"_{_SUFFIX}"
@@ -532,13 +532,13 @@ def _unique_bids_basename(
         return basename
 
     run_n = 0
-    if entities["run_id"]:
-        m = re.search(r"(\d+)$", entities["run_id"])
+    if entities["run"]:
+        m = re.search(r"(\d+)$", entities["run"])
         if m:
             run_n = int(m.group(1)) + 1
     while True:
         candidate = _bids_basename(
-            {**entities, "run_id": f"run-{run_n:02d}"}, recording
+            {**entities, "run": f"run-{run_n:02d}"}, recording
         )
         if not (dest_dir / f"{candidate}.tsv.gz").exists():
             return candidate
@@ -830,14 +830,14 @@ def _read_existing_map(map_path: Path) -> dict[str, dict[str, str]]:
 def _map_sort_key(row: dict[str, str]) -> tuple[str, ...]:
     """Sort key for physioconvert_map.tsv rows: BIDS entities, broadest grouping first.
 
-    Orders by ``acquisition_id``, then ``run_id``, ``task_id``, ``session_id``,
+    Orders by ``acquisition``, then ``run``, ``task``, ``session_id``,
     and finally ``participant_id`` (blanks sort before filled values), so rows
     sharing an acquisition stay together regardless of source path.
     """
     return (
-        row.get("acquisition_id", ""),
-        row.get("run_id", ""),
-        row.get("task_id", ""),
+        row.get("acquisition", ""),
+        row.get("run", ""),
+        row.get("task", ""),
         row.get("session_id", ""),
         row.get("participant_id", ""),
     )
@@ -1270,7 +1270,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         map_rows.append(_preserve_map_row(rel, prior, STATUS_MISSING))
         qc_rows.append(_qc_row(rel, "", "", "", "", "", STATUS_MISSING))
 
-    # The map is grouped by BIDS entities (acquisition_id, run_id, task_id,
+    # The map is grouped by BIDS entities (acquisition, run, task,
     # session_id, participant_id); the QC table stays indexed by source path.
     _write_tsv(map_path, map_rows, _MAP_COLUMNS, _map_sort_key)
     _write_tsv(qc_path, qc_rows, _QC_COLUMNS)
