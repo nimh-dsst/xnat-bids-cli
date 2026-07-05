@@ -1,6 +1,6 @@
 {
     "source_path": {
-        "Description": "Path to the source physio recording relative to the --input root (POSIX separators). This is the index key shared with physio_qc.tsv."
+        "Description": "Path to the source physio recording relative to the --input root (POSIX separators). This is the index key shared with physioconvert_qc.tsv."
     },
     "participant_id": {
         "Description": "BIDS participant identifier (sub-<label>) best-guessed from the first underscore token of the input filename. Editable: user edits are preserved across runs. Blank when the filename did not start with a participant label (the file is then staged with status UNKNOWN_NAME)."
@@ -21,7 +21,7 @@
         "Description": "BIDS datatype directory the recording is placed under (e.g. func). Not encoded in the filename, so it defaults to func; change it for non-functional recordings. Editable."
     },
     "status": {
-        "Description": "Per-file processing outcome, regenerated every run. Shared with physio_qc.tsv and the log CSV.",
+        "Description": "Per-file processing outcome, regenerated every run. Shared with physioconvert_qc.tsv and the log CSV.",
         "Levels": {
             "CONVERTED": "phys2bids read the file and its BIDS _physio.tsv.gz/.json file(s) were written to the proper path.",
             "UNKNOWN_NAME": "Valid physio but participant_id is blank, so it was converted into tmp_phys2bids/ under its input basename; fill in participant_id and re-run.",
@@ -29,7 +29,7 @@
             "NOT_PHYSIO": "Matched a supported extension but could not be loaded as physiological data.",
             "READER_MISSING": "The optional reader package phys2bids needs for this format is not installed.",
             "CONVERT_ERROR": "phys2bids raised while converting, or produced no .tsv.gz output.",
-            "MISSING": "A file present in a prior physio_map.tsv is no longer found under --input; its row and edits are preserved."
+            "MISSING": "A file present in a prior physioconvert_map.tsv is no longer found under --input; its row and edits are preserved."
         }
     }
 }

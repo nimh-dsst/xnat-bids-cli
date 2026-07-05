@@ -10,15 +10,15 @@ from datetime import datetime
 from pathlib import Path
 
 # Mapping TSV written at the output (BIDS project) root.
-_MAP_FILENAME = "physio_map.tsv"
+_MAP_FILENAME = "physioconvert_map.tsv"
 
 # QC TSV written alongside the map; holds the per-file metrics regenerated every
 # run (channel/frequency info, converted output paths, sample counts/durations).
-_QC_FILENAME = "physio_qc.tsv"
+_QC_FILENAME = "physioconvert_qc.tsv"
 
 # Static data-dictionary sidecars copied next to the two TSVs on each run.
-_MAP_DICT_FILENAME = "physio_map.json"
-_QC_DICT_FILENAME = "physio_qc.json"
+_MAP_DICT_FILENAME = "physioconvert_map.json"
+_QC_DICT_FILENAME = "physioconvert_qc.json"
 
 # BIDS suffix for continuous physiological recordings.
 _SUFFIX = "physio"
@@ -27,7 +27,7 @@ _SUFFIX = "physio"
 # limited to these and every match is validated by actually loading it.
 _SUPPORTED_EXTS = {".acq", ".txt", ".mat", ".gep", ".smr"}
 
-# Columns the user is meant to edit in physio_map.tsv.
+# Columns the user is meant to edit in physioconvert_map.tsv.
 _EDITABLE_COLUMNS = [
     "participant_id",
     "session_id",
@@ -36,12 +36,13 @@ _EDITABLE_COLUMNS = [
     "run_id",
     "datatype",
 ]
-# physio_map.tsv holds the editable BIDS entities plus the regenerated status.
-# The converted output path(s) live in physio_qc.tsv (column ``output_files``,
-# joinable on ``source_path``) and the log's DESTINATION_PATH column.
+# physioconvert_map.tsv holds the editable BIDS entities plus the regenerated
+# status. The converted output path(s) live in physioconvert_qc.tsv (column
+# ``output_files``, joinable on ``source_path``) and the log's
+# DESTINATION_PATH column.
 _MAP_COLUMNS = ["source_path", "status"] + _EDITABLE_COLUMNS
-# physio_qc.tsv holds the per-file metrics the tool regenerates every run; it
-# shares the source_path index key and the status column with the map.
+# physioconvert_qc.tsv holds the per-file metrics the tool regenerates every
+# run; it shares the source_path index key and the status column with the map.
 _QC_COLUMNS = [
     "source_path",
     "status",
@@ -109,7 +110,7 @@ class _LogWriter:
     """Append per-file rows to a CSV log, mirroring the other subcommands.
 
     A no-op when ``path`` is ``None`` (logging disabled). The header is
-    ``DATESTAMP,STATUS,SOURCE_PATH,DESTINATION_PATH``; physio runs serially, so
+    ``DATESTAMP,STATUS,SOURCE_PATH,DESTINATION_PATH``; physioconvert runs serially, so
     no lock is needed. A converted file that produced several outputs emits one
     row per destination (so the one-row-per-source invariant is relaxed for
     converted files); files with no output emit a single row with a blank
@@ -603,7 +604,7 @@ def _run_worker(task: tuple[str, str, bool]) -> dict:
     When ``maps`` (the third task element) is True, the phys2bids conversion is
     skipped: the file is still loaded to recompute its metrics, but no staging
     directory is produced (placement and prior-output paths are handled in the
-    main process from the existing physio_qc.tsv).
+    main process from the existing physioconvert_qc.tsv).
     """
     input_root_str, path_str, maps = task
     path = Path(path_str)
@@ -739,7 +740,7 @@ def _relocate_existing_outputs(
     name_known: bool,
     base_stem: str,
 ) -> tuple[str, list[str], str | None]:
-    """Move already-converted outputs to match edited physio_map.tsv entities.
+    """Move already-converted outputs to match edited physioconvert_map.tsv entities.
 
     Maps-mode counterpart to ``_place_staged``: instead of re-running phys2bids,
     it relocates the ``.tsv.gz``/``.json`` pair(s) a source produced on an
@@ -808,7 +809,7 @@ def _relocate_existing_outputs(
 
 
 def _read_existing_map(map_path: Path) -> dict[str, dict[str, str]]:
-    """Load an existing physio_map.tsv as full rows keyed by ``source_path``.
+    """Load an existing physioconvert_map.tsv as full rows keyed by ``source_path``.
 
     The whole row is kept so editable entity columns (whose user edits, including
     intentional blanks, must be preserved) are available when merging.
@@ -827,7 +828,7 @@ def _read_existing_map(map_path: Path) -> dict[str, dict[str, str]]:
 
 
 def _map_sort_key(row: dict[str, str]) -> tuple[str, ...]:
-    """Sort key for physio_map.tsv rows: BIDS entities, broadest grouping first.
+    """Sort key for physioconvert_map.tsv rows: BIDS entities, broadest grouping first.
 
     Orders by ``acquisition_id``, then ``run_id``, ``task_id``, ``session_id``,
     and finally ``participant_id`` (blanks sort before filled values), so rows
@@ -843,7 +844,7 @@ def _map_sort_key(row: dict[str, str]) -> tuple[str, ...]:
 
 
 def _read_existing_qc(qc_path: Path) -> dict[str, dict[str, str]]:
-    """Load an existing physio_qc.tsv as full rows keyed by ``source_path``.
+    """Load an existing physioconvert_qc.tsv as full rows keyed by ``source_path``.
 
     The whole row is kept so an already-converted file's regenerated metrics
     (channel/frequency info, sample counts, output paths) can be preserved
@@ -873,7 +874,7 @@ def _has_existing_outputs(
 
     True when the prior map status indicates it was converted (``CONVERTED``,
     ``DATES_DISAGREE``, or ``UNKNOWN_NAME`` — the tmp_phys2bids staging) *and*
-    every output path recorded for it in physio_qc.tsv still exists on disk. Such
+    every output path recorded for it in physioconvert_qc.tsv still exists on disk. Such
     a file is never re-converted: its outputs are instead relocated to match the
     (possibly edited) map. A file with no recorded outputs, a missing output, or
     any other status (``CONVERT_ERROR``, ``NOT_PHYSIO``, …) is (re-)converted.
@@ -916,7 +917,7 @@ def _resolve_entities(
 ) -> tuple[dict[str, str], dict]:
     """Entity values for a file: user-edited if present, else derived.
 
-    Editable values from an existing physio_map.tsv take precedence (including
+    Editable values from an existing physioconvert_map.tsv take precedence (including
     intentional blanks); any column missing from an older file falls back to a
     fresh derivation. Returns ``(entities, date_info)``; ``date_info`` gains an
     ``overridden`` flag that is True when the user has changed ``session_id``
@@ -955,7 +956,7 @@ def _converted_result(rel: str, prior_qc: dict[str, str]) -> dict:
 
     Lets an already-converted file be fed through ``_finish`` (in relocate mode)
     without re-running phys2bids or re-reading the file: the channel/frequency
-    metrics are carried over verbatim from its prior physio_qc.tsv row, and only
+    metrics are carried over verbatim from its prior physioconvert_qc.tsv row, and only
     the output paths are refreshed by the relocation. Marked ``is_physio`` with no
     staging so ``_finish`` takes the relocate-existing-outputs branch.
     """
@@ -983,7 +984,7 @@ def _qc_row(
     duration_seconds: str,
     status: str,
 ) -> dict[str, str]:
-    """Assemble one physio_qc.tsv row; blank metrics for non-converted files."""
+    """Assemble one physioconvert_qc.tsv row; blank metrics for non-converted files."""
     return {
         "source_path": rel_path,
         "n_channels": n_channels,
@@ -1008,7 +1009,7 @@ def _find_asset(name: str) -> Path | None:
 
 
 def _copy_data_dictionaries(output_dir: Path) -> None:
-    """Copy the physio_map/physio_qc JSON data dictionaries next to the TSVs.
+    """Copy the physioconvert_map/physioconvert_qc JSON data dictionaries next to the TSVs.
 
     Run once after all conversions so each output directory carries the column
     descriptions for both TSVs. A missing asset is warned about, not fatal.
@@ -1024,7 +1025,7 @@ def _copy_data_dictionaries(output_dir: Path) -> None:
             shutil.copyfile(src, output_dir / dest_name)
 
 
-def physio_cmd(args: argparse.Namespace) -> int:
+def physioconvert_cmd(args: argparse.Namespace) -> int:
     if args.nphysio < 1:
         sys.exit("Error: -n/--nphysio must be >= 1.")
 
@@ -1041,7 +1042,7 @@ def physio_cmd(args: argparse.Namespace) -> int:
         from phys2bids.phys2bids import phys2bids as _p2b  # noqa: F401
     except ImportError:
         sys.exit(
-            "Error: phys2bids is required for physio. "
+            "Error: phys2bids is required for physioconvert. "
             "Install it via 'uv sync' or 'pip install phys2bids'."
         )
 
@@ -1076,7 +1077,7 @@ def physio_cmd(args: argparse.Namespace) -> int:
     if args.log:
         while True:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_path = output_dir / "log" / f"physio_{ts}_log.csv"
+            log_path = output_dir / "log" / f"physioconvert_{ts}_log.csv"
             if not log_path.exists():
                 break
             time.sleep(1)
@@ -1223,7 +1224,7 @@ def physio_cmd(args: argparse.Namespace) -> int:
     # On a plain run, any file already converted (with its outputs still on disk)
     # is relocated to match the map instead of being re-converted: it is fed
     # through _finish in relocate mode using its preserved metrics, so edits to
-    # its physio_map.tsv row always rename/move its outputs without re-running
+    # its physioconvert_map.tsv row always rename/move its outputs without re-running
     # phys2bids. Files lacking outputs (new, or a prior CONVERT_ERROR/NOT_PHYSIO)
     # still go to the converter. Under -m/--maps every file already takes the
     # relocate path, so this split is bypassed.
@@ -1301,13 +1302,13 @@ def physio_cmd(args: argparse.Namespace) -> int:
             "Some files have a filename date that disagrees with their "
             "last-modified date (status DATES_DISAGREE); they were converted "
             "using the last-modified date. Review and set session_id in "
-            "physio_map.tsv if the filename date is correct."
+            "physioconvert_map.tsv if the filename date is correct."
         )
     if counts[STATUS_UNKNOWN_NAME]:
         print(
             f"Some files were converted into {_TMP_DIRNAME}/ with UNKNOWN_NAME "
             "because participant_id is blank (the filename did not start with a "
-            "participant label). Fill in participant_id in physio_map.tsv and "
+            "participant label). Fill in participant_id in physioconvert_map.tsv and "
             f"re-run to place them properly (the {_TMP_DIRNAME}/ copy is removed "
             "then)."
         )

@@ -24,7 +24,7 @@ _EXCLUDE_IF_FALSE = ("recommend_for_use", "complete", "usable")
 # QC filter: qc_rating values that exclude a file from copy.
 _EXCLUDE_QC_RATINGS = {"FAIL", "UNCERTAIN"}
 
-# Columns dropped from the output scans.tsv produced by map -o.
+# Columns dropped from the output scans.tsv produced by mrimap -o.
 # rename: has been applied; task/acquisition/echo/run/suffix: redundant with filename.
 _SCANS_DROP_COLS = frozenset({"rename", "task", "acquisition", "echo", "run", "suffix"})
 
@@ -111,7 +111,7 @@ def _merge_existing(
 def _load_participant_session_map(
     map_path: Path,
 ) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
-    """Read PROJECT-<P>_map.tsv and return (participant_map, session_map).
+    """Read PROJECT-<P>_mrimap.tsv and return (participant_map, session_map).
 
     ``participant_map`` is ``{sub_old: sub_new}`` for rows where
     ``participant_rename`` is non-empty.  ``session_map`` is
@@ -562,7 +562,7 @@ def _update_output_scans_tsv(
         print(f"WARNING: could not update {dest_scans}: {exc}", file=sys.stderr)
 
 
-def map_cmd(args: argparse.Namespace) -> int:
+def mrimap_cmd(args: argparse.Namespace) -> int:
     input_root = Path(args.input).resolve()
     if not input_root.is_dir():
         sys.exit(f"Error: input directory not found: {input_root}")
@@ -585,7 +585,7 @@ def map_cmd(args: argparse.Namespace) -> int:
 
     fresh = _blank_map(rows, has_sessions)
 
-    map_path = input_root / f"PROJECT-{project}_map.tsv"
+    map_path = input_root / f"PROJECT-{project}_mrimap.tsv"
     if map_path.exists():
         merged, added = _merge_existing(fresh, map_path)
         merged.to_csv(map_path, sep="\t", index=False, na_rep="")
@@ -654,7 +654,7 @@ def map_cmd(args: argparse.Namespace) -> int:
     if all_warnings:
         sep = "=" * 60
         print(f"\n{sep}")
-        print(f"  {len(all_warnings)} WARNING(s) from map -o:")
+        print(f"  {len(all_warnings)} WARNING(s) from mrimap -o:")
         print(sep)
         for w in all_warnings:
             print(f"  {w}")

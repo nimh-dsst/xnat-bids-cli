@@ -35,7 +35,7 @@ _DATE_TAGS = (
 )
 _NON_DIGIT = re.compile(r"\D")
 
-# Root-level scans.tsv generation (run at the end of bidsconvert).
+# Root-level scans.tsv generation (run at the end of mriconvert).
 _SCANS_COLUMNS = [
     "filename",
     "acq_time",
@@ -500,7 +500,7 @@ def _generate_scans_tsv(bids_root: Path) -> None:
         shutil.copyfile(src_json, bids_root / "scans.json")
 
 
-def bidsconvert_cmd(args: argparse.Namespace) -> int:
+def mriconvert_cmd(args: argparse.Namespace) -> int:
     if args.nconvert < 1:
         sys.exit("Error: -n/--nconvert must be >= 1.")
 
@@ -518,7 +518,7 @@ def bidsconvert_cmd(args: argparse.Namespace) -> int:
         if not output_dir.is_dir():
             sys.exit(
                 f"Error: output directory not found: {output_dir}; run "
-                "bidsconvert without -m/--maps first."
+                "mriconvert without -m/--maps first."
             )
         sessions = _discover_sessions(input_root, args)
         for project in sorted({p for p, _, _ in sessions}):
@@ -537,7 +537,7 @@ def bidsconvert_cmd(args: argparse.Namespace) -> int:
         import pydicom  # noqa: F401
     except ImportError:
         sys.exit(
-            "Error: pydicom is required for bidsconvert. "
+            "Error: pydicom is required for mriconvert. "
             "Install it via 'uv sync' or 'pip install pydicom'."
         )
 
@@ -558,7 +558,7 @@ def bidsconvert_cmd(args: argparse.Namespace) -> int:
     if args.log:
         while True:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_path = output_dir / "log" / f"bidsconvert_{ts}_log.csv"
+            log_path = output_dir / "log" / f"mriconvert_{ts}_log.csv"
             if not log_path.exists():
                 break
             time.sleep(1)
