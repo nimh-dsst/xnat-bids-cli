@@ -24,6 +24,10 @@ _EXCLUDE_IF_FALSE = ("recommend_for_use", "complete", "usable")
 # QC filter: qc_rating values that exclude a file from copy.
 _EXCLUDE_QC_RATINGS = {"FAIL", "UNCERTAIN"}
 
+# Columns dropped from the output scans.tsv produced by map -o.
+# rename: has been applied; task/acquisition/echo/run/suffix: redundant with filename.
+_SCANS_DROP_COLS = frozenset({"rename", "task", "acquisition", "echo", "run", "suffix"})
+
 
 def _scan_pairs(
     bids_dir: Path,
@@ -475,9 +479,9 @@ def _update_output_scans_tsv(
     """Patch the copied root-level scans.tsv in-place.
 
     Updates ``filename``, ``bids_name``, ``participant_id``, and ``session_id``
-    to their renamed values, clears ``rename`` (the rename has been applied),
-    and omits rows for files in ``excluded`` (those files were not copied).
-    All other reviewer columns are preserved.
+    to their renamed values, omits rows for files in ``excluded`` (those files
+    were not copied), and drops the columns in ``_SCANS_DROP_COLS`` from the
+    output.  All other reviewer columns are preserved.
     """
     if not dest_scans.is_file():
         return
@@ -544,14 +548,13 @@ def _update_output_scans_tsv(
             row["participant_id"] = sub_new
         if "session_id" in row and ses_new:
             row["session_id"] = ses_new
-        if "rename" in row:
-            row["rename"] = ""
         out_rows.append(row)
 
+    out_fieldnames = [f for f in fieldnames if f not in _SCANS_DROP_COLS]
     try:
         with dest_scans.open("w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
-                f, fieldnames=fieldnames, delimiter="\t", extrasaction="ignore",
+                f, fieldnames=out_fieldnames, delimiter="\t", extrasaction="ignore",
             )
             writer.writeheader()
             writer.writerows(out_rows)

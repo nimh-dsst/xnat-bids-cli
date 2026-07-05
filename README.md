@@ -338,7 +338,7 @@ The copy also:
 
 - **QC filtering**: Files whose `scans.tsv` row has `recommend_for_use`, `complete`, or `usable` set to exactly `"FALSE"`, or `qc_rating` set to exactly `"FAIL"` or `"UNCERTAIN"`, are excluded from the copy (along with their `.json`/`.bval`/`.bvec` sidecars) and their rows are omitted from the output `scans.tsv`. Values in any of these columns that are non-empty but do not match a valid Level from `scans.json` (e.g. `"false"` instead of `"FALSE"`) generate an additional warning, since they are silently ignored by the filter.
 - Updates `participants.tsv` in the output with the renamed participant IDs.
-- Updates `scans.tsv` in the output (`filename`, `bids_name`, `participant_id`, `session_id` columns) to reflect all renames, clears the `rename` column (the rename has been applied), and omits rows for QC-excluded files. All other reviewer columns are preserved.
+- Updates `scans.tsv` in the output (`filename`, `bids_name`, `participant_id`, `session_id` columns) to reflect all renames, omits rows for QC-excluded files, and drops the columns `rename`, `task`, `acquisition`, `echo`, `run`, and `suffix` (the rename has been applied; the rest are redundant with the filename). All other reviewer columns are preserved.
 - Skips `tmp_dcm2bids` and `tmp_phys2bids` scratch directories.
 - Errors and copies nothing if `OUTPUT_DIR/PROJECT/` already exists.
 - Warns loudly for any two source files that would map to the same destination path (neither is copied); all warnings are re-displayed together at the end.
