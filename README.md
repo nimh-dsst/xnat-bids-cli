@@ -263,6 +263,8 @@ When a `scans.tsv` already exists, rows are merged by `filename` rather than bei
 
 Whenever a `scans.tsv` already exists, the freshly generated rows are compared against it and every difference in a **non-user (generator-owned)** field — `acq_time`, `series_number`, `dimensions`, `size_bytes`, `bids_name`, `participant_id`, `session_id`, `datatype`, `task`, `acquisition`, `echo`, `run`, `suffix`, plus files added or removed on disk — is reported as one `WARNING` per deviation to stdout and to a log file at `<output>/log/scans_deviations_<PROJECT>_<YYYYMMDD_HHMMSS>.log`. The log is written only when there is at least one deviation. (When `nibabel` is unavailable, `dimensions` is excluded from the comparison so its empty values are not flagged.) Reviewer-column edits are never reported as deviations.
 
+Rows preserved because their file is no longer found on disk are additionally tallied across every project in scope and, if the total is non-zero, reported once more at the very end of the run: `WARNING: N scans.tsv row(s) across all project(s) in scope reference file(s) no longer found on disk (rows preserved; see WARNING(s) above).` This is informational only — it does not affect `mriconvert`'s exit code.
+
 The columns, in order:
 
 | Column | Source |

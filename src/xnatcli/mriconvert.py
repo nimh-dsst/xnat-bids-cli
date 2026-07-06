@@ -359,26 +359,34 @@ def _scans_deviations(
     existing_rows: list[dict],
     new_rows: list[list],
     compare_columns: list[str],
-) -> list[str]:
-    """Human-readable deviations in non-user fields between the current
-    scans.tsv and a freshly generated set of rows, keyed by ``filename``."""
+) -> list[tuple[str, str]]:
+    """Deviations in non-user fields between the current scans.tsv and a
+    freshly generated set of rows, keyed by ``filename``.
+
+    Returns a list of ``(kind, message)`` pairs, where ``kind`` is one of
+    ``"new"`` (file newly present on disk), ``"missing"`` (a scans.tsv row
+    whose file is no longer found on disk — the row is preserved, not
+    dropped), or ``"changed"`` (a generator-owned field drifted).
+    """
     name_idx = _SCANS_COLUMNS.index("filename")
     col_idx = {c: _SCANS_COLUMNS.index(c) for c in compare_columns}
     existing_by_name = {r.get("filename", ""): r for r in existing_rows}
     new_by_name = {r[name_idx]: r for r in new_rows}
 
-    deviations: list[str] = []
+    deviations: list[tuple[str, str]] = []
     for name in sorted(set(existing_by_name) | set(new_by_name)):
         if name not in existing_by_name:
-            deviations.append(
-                f"{name}: newly present on disk (absent from current scans.tsv)"
-            )
+            deviations.append((
+                "new",
+                f"{name}: newly present on disk (absent from current scans.tsv)",
+            ))
             continue
         if name not in new_by_name:
-            deviations.append(
+            deviations.append((
+                "missing",
                 f"{name}: present in current scans.tsv but no longer found "
-                "on disk"
-            )
+                "on disk (row preserved)",
+            ))
             continue
         old_row, new_row = existing_by_name[name], new_by_name[name]
         for col in compare_columns:
@@ -386,18 +394,22 @@ def _scans_deviations(
             new_val = "" if new_val is None else str(new_val)
             old_val = old_row.get(col) or ""
             if new_val != old_val:
-                deviations.append(
-                    f"{name}: {col} changed from {old_val!r} to {new_val!r}"
-                )
+                deviations.append((
+                    "changed",
+                    f"{name}: {col} changed from {old_val!r} to {new_val!r}",
+                ))
     return deviations
 
 
-def _report_scans_deviations(bids_root: Path, deviations: list[str]) -> None:
+def _report_scans_deviations(
+    bids_root: Path, deviations: list[tuple[str, str]]
+) -> None:
     """Print one WARNING per deviation to stdout and write them to a log
     file under <output>/log/."""
     project = bids_root.name
     lines = [
-        f"WARNING: scans.tsv deviation [{project}] {d}" for d in deviations
+        f"WARNING: scans.tsv deviation [{project}] {msg}"
+        for _, msg in deviations
     ]
     for line in lines:
         _safe_print(line)
@@ -414,7 +426,7 @@ def _report_scans_deviations(bids_root: Path, deviations: list[str]) -> None:
     )
 
 
-def _generate_scans_tsv(bids_root: Path) -> None:
+def _generate_scans_tsv(bids_root: Path) -> int:
     """Write <bids_root>/scans.tsv from every .nii.gz under the dataset.
 
     Walks bids_root with os.walk (skipping the dcm2bids ``tmp_dcm2bids``
@@ -427,9 +439,12 @@ def _generate_scans_tsv(bids_root: Path) -> None:
     disk (their filename absent from the current scans.tsv) are appended. This
     lets separate sessions be converted at different times, appending to
     scans.tsv without disturbing already-reviewed rows.
+
+    Returns the number of preserved rows whose file is no longer found on
+    disk, for the caller to fold into an end-of-run summary.
     """
     if not bids_root.is_dir():
-        return
+        return 0
 
     tsv_path = bids_root / "scans.tsv"
 
@@ -453,6 +468,7 @@ def _generate_scans_tsv(bids_root: Path) -> None:
     rows.sort(key=lambda r: r[0])
 
     existing = _read_existing_scans(tsv_path) if tsv_path.is_file() else None
+    missing_count = 0
     if existing is None:
         merged_rows = rows
         added = len(rows)
@@ -471,6 +487,7 @@ def _generate_scans_tsv(bids_root: Path) -> None:
         deviations = _scans_deviations(existing_rows, rows, compare_columns)
         if deviations:
             _report_scans_deviations(bids_root, deviations)
+        missing_count = sum(1 for kind, _ in deviations if kind == "missing")
 
         name_idx = _SCANS_COLUMNS.index("filename")
         existing_by_name = {r.get("filename", ""): r for r in existing_rows}
@@ -510,6 +527,8 @@ def _generate_scans_tsv(bids_root: Path) -> None:
     else:
         shutil.copyfile(src_json, bids_root / "scans.json")
 
+    return missing_count
+
 
 def mriconvert_cmd(args: argparse.Namespace) -> int:
     if args.nconvert < 1:
@@ -532,8 +551,15 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
                 "mriconvert without -m/--maps first."
             )
         sessions = _discover_sessions(input_root, args)
+        missing_total = 0
         for project in sorted({p for p, _, _ in sessions}):
-            _generate_scans_tsv(output_dir / project)
+            missing_total += _generate_scans_tsv(output_dir / project)
+        if missing_total:
+            print(
+                f"WARNING: {missing_total} scans.tsv row(s) across all "
+                "project(s) in scope reference file(s) no longer found on "
+                "disk (rows preserved; see WARNING(s) above)."
+            )
         return 0
 
     if args.config is None:
@@ -632,8 +658,15 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
     if log_path is not None:
         print(f"Log written to {log_path}")
 
+    missing_total = 0
     for project in sorted({p for p, _, _ in sessions}):
-        _generate_scans_tsv(output_dir / project)
+        missing_total += _generate_scans_tsv(output_dir / project)
+    if missing_total:
+        print(
+            f"WARNING: {missing_total} scans.tsv row(s) across all "
+            "project(s) in scope reference file(s) no longer found on disk "
+            "(rows preserved; see WARNING(s) above)."
+        )
 
     bad = counts[STATUS_FAILURE] + counts[STATUS_NONEXISTENT]
     return 0 if bad == 0 else 1
