@@ -355,19 +355,6 @@ def _read_existing_scans(
         return None
 
 
-def _scans_has_user_edits(fieldnames: list[str], rows: list[dict]) -> bool:
-    """True if an existing scans.tsv has any text in a reviewer column.
-
-    The reviewer columns (``_SCANS_USER_COLUMNS``) are always written empty by
-    the generator, so any non-blank value there is end-user input we must not
-    clobber. A header-less file is treated as having no edits.
-    """
-    columns = [c for c in _SCANS_USER_COLUMNS if c in fieldnames]
-    if not columns:
-        return False
-    return any((row.get(c) or "").strip() for row in rows for c in columns)
-
-
 def _scans_deviations(
     existing_rows: list[dict],
     new_rows: list[list],
@@ -432,10 +419,14 @@ def _generate_scans_tsv(bids_root: Path) -> None:
 
     Walks bids_root with os.walk (skipping the dcm2bids ``tmp_dcm2bids``
     scratch directory) and emits one row per .nii.gz, then copies the static
-    scans.json sidecar alongside it. When a scans.tsv is already present, every
-    difference in a non-user (generator-owned) field is reported as a WARNING
-    to stdout and a log file. An existing scans.tsv that already holds end-user
-    reviewer entries is left untouched rather than regenerated.
+    scans.json sidecar alongside it. When a scans.tsv is already present, rows
+    are merged by ``filename``: a row already present in scans.tsv is always
+    kept exactly as-is (preserving any reviewer edits), even if its
+    generator-owned fields have since drifted — such drift is only reported as
+    a WARNING, never applied. Only rows for files that are newly present on
+    disk (their filename absent from the current scans.tsv) are appended. This
+    lets separate sessions be converted at different times, appending to
+    scans.tsv without disturbing already-reviewed rows.
     """
     if not bids_root.is_dir():
         return
@@ -462,8 +453,11 @@ def _generate_scans_tsv(bids_root: Path) -> None:
     rows.sort(key=lambda r: r[0])
 
     existing = _read_existing_scans(tsv_path) if tsv_path.is_file() else None
-    if existing is not None:
-        fieldnames, existing_rows = existing
+    if existing is None:
+        merged_rows = rows
+        added = len(rows)
+    else:
+        _, existing_rows = existing
         # Non-user, non-key columns the generator owns. 'dimensions' is
         # excluded when nibabel is missing so its empty values are not
         # reported as spurious deviations.
@@ -478,18 +472,35 @@ def _generate_scans_tsv(bids_root: Path) -> None:
         if deviations:
             _report_scans_deviations(bids_root, deviations)
 
-        if _scans_has_user_edits(fieldnames, existing_rows):
-            _safe_print(
-                f"WARNING: {tsv_path} already has reviewer entries; "
-                "leaving it untouched (not regenerating)."
-            )
-            return
+        name_idx = _SCANS_COLUMNS.index("filename")
+        existing_by_name = {r.get("filename", ""): r for r in existing_rows}
+        new_by_name = {r[name_idx]: r for r in rows}
+
+        merged_rows = []
+        added = 0
+        for name in sorted(set(existing_by_name) | set(new_by_name)):
+            if name in existing_by_name:
+                # Already present (whether or not it's a "partially matching"
+                # row, i.e. identical besides the reviewer columns): keep it
+                # untouched rather than overwriting it.
+                old_row = existing_by_name[name]
+                merged_rows.append([old_row.get(c, "") for c in _SCANS_COLUMNS])
+            else:
+                # Newly present on disk and absent from scans.tsv: add it.
+                merged_rows.append(new_by_name[name])
+                added += 1
 
     with tsv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerow(_SCANS_COLUMNS)
-        writer.writerows(rows)
-    _safe_print(f"Wrote {tsv_path} ({len(rows)} scan(s))")
+        writer.writerows(merged_rows)
+    if existing is None:
+        _safe_print(f"Wrote {tsv_path} ({len(merged_rows)} scan(s))")
+    else:
+        _safe_print(
+            f"Updated {tsv_path} ({len(merged_rows)} scan(s), {added} newly "
+            "added; existing rows preserved)"
+        )
 
     src_json = _find_scans_json()
     if src_json is None:
