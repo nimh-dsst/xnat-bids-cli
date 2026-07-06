@@ -346,7 +346,8 @@ The copy also:
 - Updates `participants.tsv` in the output with the renamed participant IDs.
 - Updates `scans.tsv` in the output (`filename`, `bids_name`, `participant_id`, `session_id` columns) to reflect all renames, omits rows for QC-excluded files, and drops the columns `rename`, `task`, `acquisition`, `echo`, `run`, and `suffix` (the rename has been applied; the rest are redundant with the filename). All other reviewer columns are preserved.
 - Skips `tmp_dcm2bids` and `tmp_phys2bids` scratch directories.
-- Errors and copies nothing if `OUTPUT_DIR/PROJECT/` already exists.
+- **Incremental by default**: if `OUTPUT_DIR/PROJECT/` already exists, files under `sub-*/` whose destination path already exists are treated as already mapped and left untouched — only files not yet present at the destination are copied. Root-level BIDS metadata (`scans.tsv`, `scans.json`, `participants.tsv`, `dataset_description.json`, ...) is always re-copied and re-patched, since it reflects the fully merged source state. This lets `mrimap -o` be re-run safely as new data lands in `INPUT_DIR/PROJECT/` (e.g. from further `mriconvert` runs).
+- **Warns loudly** when new files are being mapped into a `sub-*/[ses-*/]` directory that already existed at the destination before this run, since that BIDS session was already mapped and is only gaining files.
 - Warns loudly for any two source files that would map to the same destination path (neither is copied); all warnings are re-displayed together at the end.
 
 ```bash
@@ -362,7 +363,7 @@ For example, if the BIDS dataset lives at `/data/bids/MYPROJ/`, then:
 | --- | --- |
 | `-i`, `--input` | **Required.** BIDS root directory holding the dataset at `INPUT_DIR/PROJECT/`. The map TSV is written here as `PROJECT-<PROJECT>_mrimap.tsv`. |
 | `-p`, `--project` | **Required.** Project directory name under `INPUT_DIR` identifying the BIDS dataset to scan. |
-| `-o`, `--output` | *Optional.* When provided, copy the BIDS dataset to `OUTPUT_DIR/PROJECT/` with all renames from the map TSV and `scans.tsv` `rename` column applied. `OUTPUT_DIR/PROJECT/` must not already exist. |
+| `-o`, `--output` | *Optional.* When provided, copy the BIDS dataset to `OUTPUT_DIR/PROJECT/` with all renames from the map TSV and `scans.tsv` `rename` column applied. If `OUTPUT_DIR/PROJECT/` already exists, only files not already mapped there are copied (see above). |
 
 ## `xnatcli physioconvert`
 
