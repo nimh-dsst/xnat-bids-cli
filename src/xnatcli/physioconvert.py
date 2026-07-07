@@ -1010,7 +1010,9 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
     if not input_root.is_dir():
         sys.exit(f"Error: input directory not found: {input_root}")
 
-    output_dir = Path(args.output).resolve()
+    # Physio outputs nest under OUTPUT_DIR/PROJECT/, mirroring mriconvert's
+    # per-project BIDS layout.
+    output_dir = Path(args.output).resolve() / args.project
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:

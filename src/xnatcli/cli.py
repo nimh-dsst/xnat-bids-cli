@@ -375,11 +375,20 @@ def build_parser() -> argparse.ArgumentParser:
         "physio files (.acq/.txt/.mat/.gep/.smr).",
     )
     physioconvert_parser.add_argument(
+        "-p",
+        "--project",
+        required=True,
+        metavar="PROJECT",
+        help="Name of the BIDS project directory to nest outputs under, "
+        "i.e. OUTPUT_DIR/PROJECT/.",
+    )
+    physioconvert_parser.add_argument(
         "-o",
         "--output",
         required=True,
         metavar="OUTPUT_DIR",
-        help="BIDS project directory to write physio files into. A "
+        help="Directory to write BIDS physio files into. Each project's "
+        "physio outputs land under OUTPUT_DIR/PROJECT/, where a "
         "physioconvert_map.tsv (source path and best-guess BIDS entities) and a "
         "physioconvert_qc.tsv (per-file metrics), each with a .json data "
         "dictionary, are written/updated at its root.",
@@ -398,7 +407,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--log",
         action="store_true",
         help="Write a per-file log CSV to "
-        "OUTPUT_DIR/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv.",
+        "OUTPUT_DIR/PROJECT/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv.",
     )
     physioconvert_parser.add_argument(
         "-m",
