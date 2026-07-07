@@ -827,22 +827,6 @@ def _read_existing_map(map_path: Path) -> dict[str, dict[str, str]]:
     return existing
 
 
-def _map_sort_key(row: dict[str, str]) -> tuple[str, ...]:
-    """Sort key for physioconvert_map.tsv rows: BIDS entities, broadest grouping first.
-
-    Orders by ``acquisition``, then ``run``, ``task``, ``session_id``,
-    and finally ``participant_id`` (blanks sort before filled values), so rows
-    sharing an acquisition stay together regardless of source path.
-    """
-    return (
-        row.get("acquisition", ""),
-        row.get("run", ""),
-        row.get("task", ""),
-        row.get("session_id", ""),
-        row.get("participant_id", ""),
-    )
-
-
 def _read_existing_qc(qc_path: Path) -> dict[str, dict[str, str]]:
     """Load an existing physioconvert_qc.tsv as full rows keyed by ``source_path``.
 
@@ -896,16 +880,9 @@ def _write_tsv(
     path: Path,
     rows: list[dict[str, str]],
     columns: list[str],
-    sort_key=None,
 ) -> None:
-    """Write a TSV with the given columns, one row per file.
-
-    Rows are sorted by ``sort_key`` (defaults to ``source_path``); the map passes
-    ``_map_sort_key`` to group by BIDS entities instead.
-    """
-    if sort_key is None:
-        sort_key = lambda r: r["source_path"]  # noqa: E731
-    rows = sorted(rows, key=sort_key)
+    """Write a TSV with the given columns, one row per file, sorted by ``source_path``."""
+    rows = sorted(rows, key=lambda r: r["source_path"])
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=columns, delimiter="\t")
         writer.writeheader()
@@ -1270,9 +1247,8 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         map_rows.append(_preserve_map_row(rel, prior, STATUS_MISSING))
         qc_rows.append(_qc_row(rel, "", "", "", "", "", STATUS_MISSING))
 
-    # The map is grouped by BIDS entities (acquisition, run, task,
-    # session_id, participant_id); the QC table stays indexed by source path.
-    _write_tsv(map_path, map_rows, _MAP_COLUMNS, _map_sort_key)
+    # Both TSVs are indexed by, and sorted by, source_path.
+    _write_tsv(map_path, map_rows, _MAP_COLUMNS)
     _write_tsv(qc_path, qc_rows, _QC_COLUMNS)
     _copy_data_dictionaries(output_dir)
 
