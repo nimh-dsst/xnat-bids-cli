@@ -15,3 +15,4 @@ This project is a command-line interface for logging into an Extensible Neuroima
 
 - Don't assume the user wants one option over another without explicitly asking a clarifying question.
 - Don't write code comments that are very verbose or redundant.
+- Don't ever enter, read, or touch a data/ directory. A data/ directory is for user data only and should never be read or modified by the agent.

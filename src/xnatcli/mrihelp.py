@@ -424,7 +424,7 @@ def _run_helper(
     return STATUS_COMPLETE, None
 
 
-def bidsprep_cmd(args: argparse.Namespace) -> int:
+def mrihelp_cmd(args: argparse.Namespace) -> int:
     if args.nprep < 1:
         sys.exit("Error: -n/--nprep must be >= 1.")
 
@@ -436,7 +436,7 @@ def bidsprep_cmd(args: argparse.Namespace) -> int:
     project = experiments[0][0]
 
     output_dir = Path(args.output).resolve()
-    target = output_dir / f"PROJECT-{project}_bidsprep"
+    target = output_dir / f"PROJECT-{project}_mrihelp"
 
     # --maps: skip running dcm2bids_helper and only (re)draft the dcm2bids config
     # from the helper JSON sidecars already present under <target>. The helper
@@ -444,8 +444,8 @@ def bidsprep_cmd(args: argparse.Namespace) -> int:
     if args.maps:
         if not target.is_dir():
             sys.exit(
-                f"Error: bidsprep output directory not found: {target}; run "
-                "bidsprep without -m/--maps first."
+                f"Error: mrihelp output directory not found: {target}; run "
+                "mrihelp without -m/--maps first."
             )
         _draft_config(target)
         return 0
@@ -459,7 +459,7 @@ def bidsprep_cmd(args: argparse.Namespace) -> int:
     if args.log:
         while True:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_path = output_dir / "log" / f"bidsprep_{ts}_log.csv"
+            log_path = output_dir / "log" / f"mrihelp_{ts}_log.csv"
             if not log_path.exists():
                 break
             time.sleep(1)

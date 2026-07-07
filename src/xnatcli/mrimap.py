@@ -24,7 +24,7 @@ _EXCLUDE_IF_FALSE = ("recommend_for_use", "complete", "usable")
 # QC filter: qc_rating values that exclude a file from copy.
 _EXCLUDE_QC_RATINGS = {"FAIL", "UNCERTAIN"}
 
-# Columns dropped from the output scans.tsv produced by map -o.
+# Columns dropped from the output scans.tsv produced by mrimap -o.
 # rename: has been applied; task/acquisition/echo/run/suffix: redundant with filename.
 _SCANS_DROP_COLS = frozenset({"rename", "task", "acquisition", "echo", "run", "suffix"})
 
@@ -111,7 +111,7 @@ def _merge_existing(
 def _load_participant_session_map(
     map_path: Path,
 ) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
-    """Read PROJECT-<P>_map.tsv and return (participant_map, session_map).
+    """Read PROJECT-<P>_mrimap.tsv and return (participant_map, session_map).
 
     ``participant_map`` is ``{sub_old: sub_new}`` for rows where
     ``participant_rename`` is non-empty.  ``session_map`` is
@@ -391,6 +391,65 @@ def _build_copy_plan(
     return plan
 
 
+def _existing_session_dirs(dest_bids: Path) -> set[str]:
+    """Relative posix keys (``sub-X`` or ``sub-X/ses-Y``) for every session
+    directory already present under ``dest_bids`` before this run.
+
+    Used to detect when a copy plan is about to add files into a BIDS
+    session that was already mapped by a previous run, so that can be
+    flagged with a WARNING instead of happening silently.
+    """
+    keys: set[str] = set()
+    if not dest_bids.is_dir():
+        return keys
+    for sub_dir in dest_bids.iterdir():
+        if not sub_dir.is_dir() or not sub_dir.name.startswith("sub-"):
+            continue
+        ses_dirs = [
+            d for d in sub_dir.iterdir() if d.is_dir() and d.name.startswith("ses-")
+        ]
+        if ses_dirs:
+            keys.update(f"{sub_dir.name}/{ses_dir.name}" for ses_dir in ses_dirs)
+        else:
+            keys.add(sub_dir.name)
+    return keys
+
+
+def _session_key(dest_rel: str) -> str | None:
+    """``sub-X`` or ``sub-X/ses-Y`` prefix of a plan destination path, or
+    ``None`` for a root-level file (e.g. ``scans.tsv``)."""
+    parts = dest_rel.split("/")
+    if not parts or not parts[0].startswith("sub-"):
+        return None
+    if len(parts) > 1 and parts[1].startswith("ses-"):
+        return f"{parts[0]}/{parts[1]}"
+    return parts[0]
+
+
+def _partition_plan_for_incremental(
+    plan: list[tuple[Path, str]],
+    dest_root: Path,
+) -> tuple[list[tuple[Path, str]], list[tuple[Path, str]]]:
+    """Split a copy plan into ``(to_copy, already_mapped)``.
+
+    A file under ``sub-*/`` whose destination already exists on disk is
+    treated as already mapped by a previous run and left untouched. Root-level
+    BIDS metadata files (``scans.tsv``, ``participants.tsv``,
+    ``dataset_description.json``, ...) are always re-copied, since they
+    reflect the fully merged state already maintained on the source side
+    (e.g. by ``mriconvert``), and are patched in place afterward.
+    """
+    to_copy: list[tuple[Path, str]] = []
+    already_mapped: list[tuple[Path, str]] = []
+    for src, dest_rel in plan:
+        is_root_level = "/" not in dest_rel
+        if not is_root_level and (dest_root / dest_rel).exists():
+            already_mapped.append((src, dest_rel))
+        else:
+            to_copy.append((src, dest_rel))
+    return to_copy, already_mapped
+
+
 def _check_collisions(
     plan: list[tuple[Path, str]],
 ) -> tuple[list[tuple[Path, str]], list[str]]:
@@ -562,7 +621,7 @@ def _update_output_scans_tsv(
         print(f"WARNING: could not update {dest_scans}: {exc}", file=sys.stderr)
 
 
-def map_cmd(args: argparse.Namespace) -> int:
+def mrimap_cmd(args: argparse.Namespace) -> int:
     input_root = Path(args.input).resolve()
     if not input_root.is_dir():
         sys.exit(f"Error: input directory not found: {input_root}")
@@ -585,7 +644,7 @@ def map_cmd(args: argparse.Namespace) -> int:
 
     fresh = _blank_map(rows, has_sessions)
 
-    map_path = input_root / f"PROJECT-{project}_map.tsv"
+    map_path = input_root / f"PROJECT-{project}_mrimap.tsv"
     if map_path.exists():
         merged, added = _merge_existing(fresh, map_path)
         merged.to_csv(map_path, sep="\t", index=False, na_rep="")
@@ -603,12 +662,7 @@ def map_cmd(args: argparse.Namespace) -> int:
     # --- Step 2: copy-with-rename to the output directory ---
     output_root = Path(args.output).resolve()
     dest_bids = output_root / project
-
-    if dest_bids.exists():
-        sys.exit(
-            f"Error: output directory already exists: {dest_bids}. "
-            "Remove it before re-running."
-        )
+    existing_sessions = _existing_session_dirs(dest_bids)
 
     participant_map, session_map = _load_participant_session_map(map_path)
     rename_map = _load_rename_map(bids_dir / "scans.tsv")
@@ -633,7 +687,29 @@ def map_cmd(args: argparse.Namespace) -> int:
     for w in collision_warnings:
         print(w)
 
-    copy_warnings = _execute_copy_plan(plan, dest_bids)
+    to_copy, already_mapped = _partition_plan_for_incremental(plan, dest_bids)
+
+    # Loudly flag any BIDS session that already exists in the output and is
+    # about to receive additional, previously-unmapped files.
+    touched_existing_sessions = sorted(
+        {
+            key
+            for _, dest_rel in to_copy
+            if (key := _session_key(dest_rel)) is not None
+            and key in existing_sessions
+        }
+    )
+    session_warnings = [
+        f"WARNING: BIDS session {dest_bids / key} already exists; mapping in "
+        f"{sum(1 for _, d in to_copy if _session_key(d) == key)} new file(s) "
+        "to it."
+        for key in touched_existing_sessions
+    ]
+    all_warnings.extend(session_warnings)
+    for w in session_warnings:
+        print(w)
+
+    copy_warnings = _execute_copy_plan(to_copy, dest_bids)
     all_warnings.extend(copy_warnings)
     for w in copy_warnings:
         print(w)
@@ -644,8 +720,9 @@ def map_cmd(args: argparse.Namespace) -> int:
     _update_participants_tsv(dest_bids / "participants.tsv", participant_map)
 
     print(
-        f"Copied {len(plan)} file(s) to {dest_bids} "
-        f"({len(participant_map)} participant rename(s), "
+        f"Copied {len(to_copy)} file(s) to {dest_bids} "
+        f"({len(already_mapped)} file(s) already mapped and left untouched, "
+        f"{len(participant_map)} participant rename(s), "
         f"{len(session_map)} session rename(s), "
         f"{len(rename_map)} file rename(s), "
         f"{len(excluded)} file(s) excluded by QC filter)."
@@ -654,7 +731,7 @@ def map_cmd(args: argparse.Namespace) -> int:
     if all_warnings:
         sep = "=" * 60
         print(f"\n{sep}")
-        print(f"  {len(all_warnings)} WARNING(s) from map -o:")
+        print(f"  {len(all_warnings)} WARNING(s) from mrimap -o:")
         print(sep)
         for w in all_warnings:
             print(f"  {w}")

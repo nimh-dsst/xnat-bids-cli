@@ -35,7 +35,7 @@ _DATE_TAGS = (
 )
 _NON_DIGIT = re.compile(r"\D")
 
-# Root-level scans.tsv generation (run at the end of bidsconvert).
+# Root-level scans.tsv generation (run at the end of mriconvert).
 _SCANS_COLUMNS = [
     "filename",
     "acq_time",
@@ -355,43 +355,38 @@ def _read_existing_scans(
         return None
 
 
-def _scans_has_user_edits(fieldnames: list[str], rows: list[dict]) -> bool:
-    """True if an existing scans.tsv has any text in a reviewer column.
-
-    The reviewer columns (``_SCANS_USER_COLUMNS``) are always written empty by
-    the generator, so any non-blank value there is end-user input we must not
-    clobber. A header-less file is treated as having no edits.
-    """
-    columns = [c for c in _SCANS_USER_COLUMNS if c in fieldnames]
-    if not columns:
-        return False
-    return any((row.get(c) or "").strip() for row in rows for c in columns)
-
-
 def _scans_deviations(
     existing_rows: list[dict],
     new_rows: list[list],
     compare_columns: list[str],
-) -> list[str]:
-    """Human-readable deviations in non-user fields between the current
-    scans.tsv and a freshly generated set of rows, keyed by ``filename``."""
+) -> list[tuple[str, str]]:
+    """Deviations in non-user fields between the current scans.tsv and a
+    freshly generated set of rows, keyed by ``filename``.
+
+    Returns a list of ``(kind, message)`` pairs, where ``kind`` is one of
+    ``"new"`` (file newly present on disk), ``"missing"`` (a scans.tsv row
+    whose file is no longer found on disk — the row is preserved, not
+    dropped), or ``"changed"`` (a generator-owned field drifted).
+    """
     name_idx = _SCANS_COLUMNS.index("filename")
     col_idx = {c: _SCANS_COLUMNS.index(c) for c in compare_columns}
     existing_by_name = {r.get("filename", ""): r for r in existing_rows}
     new_by_name = {r[name_idx]: r for r in new_rows}
 
-    deviations: list[str] = []
+    deviations: list[tuple[str, str]] = []
     for name in sorted(set(existing_by_name) | set(new_by_name)):
         if name not in existing_by_name:
-            deviations.append(
-                f"{name}: newly present on disk (absent from current scans.tsv)"
-            )
+            deviations.append((
+                "new",
+                f"{name}: newly present on disk (absent from current scans.tsv)",
+            ))
             continue
         if name not in new_by_name:
-            deviations.append(
+            deviations.append((
+                "missing",
                 f"{name}: present in current scans.tsv but no longer found "
-                "on disk"
-            )
+                "on disk (row preserved)",
+            ))
             continue
         old_row, new_row = existing_by_name[name], new_by_name[name]
         for col in compare_columns:
@@ -399,18 +394,22 @@ def _scans_deviations(
             new_val = "" if new_val is None else str(new_val)
             old_val = old_row.get(col) or ""
             if new_val != old_val:
-                deviations.append(
-                    f"{name}: {col} changed from {old_val!r} to {new_val!r}"
-                )
+                deviations.append((
+                    "changed",
+                    f"{name}: {col} changed from {old_val!r} to {new_val!r}",
+                ))
     return deviations
 
 
-def _report_scans_deviations(bids_root: Path, deviations: list[str]) -> None:
+def _report_scans_deviations(
+    bids_root: Path, deviations: list[tuple[str, str]]
+) -> None:
     """Print one WARNING per deviation to stdout and write them to a log
     file under <output>/log/."""
     project = bids_root.name
     lines = [
-        f"WARNING: scans.tsv deviation [{project}] {d}" for d in deviations
+        f"WARNING: scans.tsv deviation [{project}] {msg}"
+        for _, msg in deviations
     ]
     for line in lines:
         _safe_print(line)
@@ -427,18 +426,25 @@ def _report_scans_deviations(bids_root: Path, deviations: list[str]) -> None:
     )
 
 
-def _generate_scans_tsv(bids_root: Path) -> None:
+def _generate_scans_tsv(bids_root: Path) -> int:
     """Write <bids_root>/scans.tsv from every .nii.gz under the dataset.
 
     Walks bids_root with os.walk (skipping the dcm2bids ``tmp_dcm2bids``
     scratch directory) and emits one row per .nii.gz, then copies the static
-    scans.json sidecar alongside it. When a scans.tsv is already present, every
-    difference in a non-user (generator-owned) field is reported as a WARNING
-    to stdout and a log file. An existing scans.tsv that already holds end-user
-    reviewer entries is left untouched rather than regenerated.
+    scans.json sidecar alongside it. When a scans.tsv is already present, rows
+    are merged by ``filename``: a row already present in scans.tsv is always
+    kept exactly as-is (preserving any reviewer edits), even if its
+    generator-owned fields have since drifted — such drift is only reported as
+    a WARNING, never applied. Only rows for files that are newly present on
+    disk (their filename absent from the current scans.tsv) are appended. This
+    lets separate sessions be converted at different times, appending to
+    scans.tsv without disturbing already-reviewed rows.
+
+    Returns the number of preserved rows whose file is no longer found on
+    disk, for the caller to fold into an end-of-run summary.
     """
     if not bids_root.is_dir():
-        return
+        return 0
 
     tsv_path = bids_root / "scans.tsv"
 
@@ -462,8 +468,12 @@ def _generate_scans_tsv(bids_root: Path) -> None:
     rows.sort(key=lambda r: r[0])
 
     existing = _read_existing_scans(tsv_path) if tsv_path.is_file() else None
-    if existing is not None:
-        fieldnames, existing_rows = existing
+    missing_count = 0
+    if existing is None:
+        merged_rows = rows
+        added = len(rows)
+    else:
+        _, existing_rows = existing
         # Non-user, non-key columns the generator owns. 'dimensions' is
         # excluded when nibabel is missing so its empty values are not
         # reported as spurious deviations.
@@ -477,19 +487,37 @@ def _generate_scans_tsv(bids_root: Path) -> None:
         deviations = _scans_deviations(existing_rows, rows, compare_columns)
         if deviations:
             _report_scans_deviations(bids_root, deviations)
+        missing_count = sum(1 for kind, _ in deviations if kind == "missing")
 
-        if _scans_has_user_edits(fieldnames, existing_rows):
-            _safe_print(
-                f"WARNING: {tsv_path} already has reviewer entries; "
-                "leaving it untouched (not regenerating)."
-            )
-            return
+        name_idx = _SCANS_COLUMNS.index("filename")
+        existing_by_name = {r.get("filename", ""): r for r in existing_rows}
+        new_by_name = {r[name_idx]: r for r in rows}
+
+        merged_rows = []
+        added = 0
+        for name in sorted(set(existing_by_name) | set(new_by_name)):
+            if name in existing_by_name:
+                # Already present (whether or not it's a "partially matching"
+                # row, i.e. identical besides the reviewer columns): keep it
+                # untouched rather than overwriting it.
+                old_row = existing_by_name[name]
+                merged_rows.append([old_row.get(c, "") for c in _SCANS_COLUMNS])
+            else:
+                # Newly present on disk and absent from scans.tsv: add it.
+                merged_rows.append(new_by_name[name])
+                added += 1
 
     with tsv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f, delimiter="\t")
         writer.writerow(_SCANS_COLUMNS)
-        writer.writerows(rows)
-    _safe_print(f"Wrote {tsv_path} ({len(rows)} scan(s))")
+        writer.writerows(merged_rows)
+    if existing is None:
+        _safe_print(f"Wrote {tsv_path} ({len(merged_rows)} scan(s))")
+    else:
+        _safe_print(
+            f"Updated {tsv_path} ({len(merged_rows)} scan(s), {added} newly "
+            "added; existing rows preserved)"
+        )
 
     src_json = _find_scans_json()
     if src_json is None:
@@ -499,8 +527,10 @@ def _generate_scans_tsv(bids_root: Path) -> None:
     else:
         shutil.copyfile(src_json, bids_root / "scans.json")
 
+    return missing_count
 
-def bidsconvert_cmd(args: argparse.Namespace) -> int:
+
+def mriconvert_cmd(args: argparse.Namespace) -> int:
     if args.nconvert < 1:
         sys.exit("Error: -n/--nconvert must be >= 1.")
 
@@ -518,11 +548,18 @@ def bidsconvert_cmd(args: argparse.Namespace) -> int:
         if not output_dir.is_dir():
             sys.exit(
                 f"Error: output directory not found: {output_dir}; run "
-                "bidsconvert without -m/--maps first."
+                "mriconvert without -m/--maps first."
             )
         sessions = _discover_sessions(input_root, args)
+        missing_total = 0
         for project in sorted({p for p, _, _ in sessions}):
-            _generate_scans_tsv(output_dir / project)
+            missing_total += _generate_scans_tsv(output_dir / project)
+        if missing_total:
+            print(
+                f"WARNING: {missing_total} scans.tsv row(s) across all "
+                "project(s) in scope reference file(s) no longer found on "
+                "disk (rows preserved; see WARNING(s) above)."
+            )
         return 0
 
     if args.config is None:
@@ -537,7 +574,7 @@ def bidsconvert_cmd(args: argparse.Namespace) -> int:
         import pydicom  # noqa: F401
     except ImportError:
         sys.exit(
-            "Error: pydicom is required for bidsconvert. "
+            "Error: pydicom is required for mriconvert. "
             "Install it via 'uv sync' or 'pip install pydicom'."
         )
 
@@ -558,7 +595,7 @@ def bidsconvert_cmd(args: argparse.Namespace) -> int:
     if args.log:
         while True:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_path = output_dir / "log" / f"bidsconvert_{ts}_log.csv"
+            log_path = output_dir / "log" / f"mriconvert_{ts}_log.csv"
             if not log_path.exists():
                 break
             time.sleep(1)
@@ -621,8 +658,15 @@ def bidsconvert_cmd(args: argparse.Namespace) -> int:
     if log_path is not None:
         print(f"Log written to {log_path}")
 
+    missing_total = 0
     for project in sorted({p for p, _, _ in sessions}):
-        _generate_scans_tsv(output_dir / project)
+        missing_total += _generate_scans_tsv(output_dir / project)
+    if missing_total:
+        print(
+            f"WARNING: {missing_total} scans.tsv row(s) across all "
+            "project(s) in scope reference file(s) no longer found on disk "
+            "(rows preserved; see WARNING(s) above)."
+        )
 
     bad = counts[STATUS_FAILURE] + counts[STATUS_NONEXISTENT]
     return 0 if bad == 0 else 1
