@@ -9,6 +9,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
+from .mrimap import _blank_map, _merge_existing, _scan_pairs
+
 # Mapping TSV written at the output (BIDS project) root.
 _MAP_FILENAME = "physioconvert_map.tsv"
 
@@ -1002,6 +1004,41 @@ def _copy_data_dictionaries(output_dir: Path) -> None:
             shutil.copyfile(src, output_dir / dest_name)
 
 
+def _write_physiomap(output_dir: Path, project: str) -> Path | None:
+    """Write/update ``PROJECT-<project>_physiomap.tsv`` next to ``output_dir``.
+
+    Modeled after ``mrimap``'s participant/session map: scans ``output_dir``
+    (the physio project directory) for ``sub-*/[ses-*/]`` pairs and maps each
+    ``participant_id`` to a blank ``participant_rename`` (and, when the output
+    uses sessions, each ``session_id`` to a blank ``session_rename``), merging
+    with any prior file so existing rename edits are preserved. Returns the
+    path written, or ``None`` if no ``sub-*`` directories were found yet.
+    """
+    rows, has_sessions, skipped = _scan_pairs(output_dir)
+    if not rows:
+        return None
+    if skipped:
+        print(
+            "Warning: the physio output uses sessions but these participants "
+            f"have no ses-* subdirectory and were skipped: {', '.join(skipped)}",
+            file=sys.stderr,
+        )
+
+    fresh = _blank_map(rows, has_sessions)
+    physiomap_path = output_dir.parent / f"PROJECT-{project}_physiomap.tsv"
+    if physiomap_path.exists():
+        merged, added = _merge_existing(fresh, physiomap_path)
+        merged.to_csv(physiomap_path, sep="\t", index=False, na_rep="")
+        print(
+            f"Updated {physiomap_path} ({added} new row{'s' if added != 1 else ''} "
+            f"added, {len(merged)} total)."
+        )
+    else:
+        fresh.to_csv(physiomap_path, sep="\t", index=False, na_rep="")
+        print(f"Wrote {physiomap_path} ({len(fresh)} rows).")
+    return physiomap_path
+
+
 def physioconvert_cmd(args: argparse.Namespace) -> int:
     if args.nphysio < 1:
         sys.exit("Error: -n/--nphysio must be >= 1.")
@@ -1253,6 +1290,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
     _write_tsv(map_path, map_rows, _MAP_COLUMNS)
     _write_tsv(qc_path, qc_rows, _QC_COLUMNS)
     _copy_data_dictionaries(output_dir)
+    physiomap_path = _write_physiomap(output_dir, args.project)
 
     total = sum(counts.values())
     print(f"\nProcessed {total} file(s):")
@@ -1273,6 +1311,8 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         )
     print(f"Mapping written to {map_path}")
     print(f"QC table written to {qc_path}")
+    if physiomap_path is not None:
+        print(f"Physiomap written to {physiomap_path}")
     if log_path is not None:
         print(f"Log written to {log_path}")
     if counts[STATUS_DATES_DISAGREE]:
