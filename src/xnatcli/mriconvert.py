@@ -35,7 +35,7 @@ _DATE_TAGS = (
 )
 _NON_DIGIT = re.compile(r"\D")
 
-# Root-level scans.tsv generation (run at the end of mriconvert).
+# Root-level mriscans.tsv generation (run at the end of mriconvert).
 _SCANS_COLUMNS = [
     "filename",
     "acq_time",
@@ -331,11 +331,11 @@ def _scans_row(nii_path: Path, bids_root: Path, nib) -> list:
 
 
 def _find_scans_json() -> Path | None:
-    """Locate the static scans.json data dictionary (dev tree or wheel)."""
+    """Locate the static mriscans.json data dictionary (dev tree or wheel)."""
     here = Path(__file__).resolve().parent
     for candidate in (
-        here.parent / "assets" / "scans.json",  # dev: src/assets/
-        here / "assets" / "scans.json",  # wheel: xnatcli/assets/
+        here.parent / "assets" / "mriscans.json",  # dev: src/assets/
+        here / "assets" / "mriscans.json",  # wheel: xnatcli/assets/
     ):
         if candidate.is_file():
             return candidate
@@ -345,7 +345,7 @@ def _find_scans_json() -> Path | None:
 def _read_existing_scans(
     tsv_path: Path,
 ) -> tuple[list[str], list[dict]] | None:
-    """Parse an existing scans.tsv into (fieldnames, rows), or None if it
+    """Parse an existing mriscans.tsv into (fieldnames, rows), or None if it
     cannot be read."""
     try:
         with tsv_path.open(newline="", encoding="utf-8") as f:
@@ -360,11 +360,11 @@ def _scans_deviations(
     new_rows: list[list],
     compare_columns: list[str],
 ) -> list[tuple[str, str]]:
-    """Deviations in non-user fields between the current scans.tsv and a
+    """Deviations in non-user fields between the current mriscans.tsv and a
     freshly generated set of rows, keyed by ``filename``.
 
     Returns a list of ``(kind, message)`` pairs, where ``kind`` is one of
-    ``"new"`` (file newly present on disk), ``"missing"`` (a scans.tsv row
+    ``"new"`` (file newly present on disk), ``"missing"`` (a mriscans.tsv row
     whose file is no longer found on disk — the row is preserved, not
     dropped), or ``"changed"`` (a generator-owned field drifted).
     """
@@ -378,13 +378,13 @@ def _scans_deviations(
         if name not in existing_by_name:
             deviations.append((
                 "new",
-                f"{name}: newly present on disk (absent from current scans.tsv)",
+                f"{name}: newly present on disk (absent from current mriscans.tsv)",
             ))
             continue
         if name not in new_by_name:
             deviations.append((
                 "missing",
-                f"{name}: present in current scans.tsv but no longer found "
+                f"{name}: present in current mriscans.tsv but no longer found "
                 "on disk (row preserved)",
             ))
             continue
@@ -408,7 +408,7 @@ def _report_scans_deviations(
     file under <output>/log/."""
     project = bids_root.name
     lines = [
-        f"WARNING: scans.tsv deviation [{project}] {msg}"
+        f"WARNING: mriscans.tsv deviation [{project}] {msg}"
         for _, msg in deviations
     ]
     for line in lines:
@@ -421,24 +421,24 @@ def _report_scans_deviations(
     with log_path.open("w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     _safe_print(
-        f"{len(deviations)} scans.tsv deviation(s) for {project} "
+        f"{len(deviations)} mriscans.tsv deviation(s) for {project} "
         f"logged to {log_path}"
     )
 
 
 def _generate_scans_tsv(bids_root: Path) -> int:
-    """Write <bids_root>/scans.tsv from every .nii.gz under the dataset.
+    """Write <bids_root>/mriscans.tsv from every .nii.gz under the dataset.
 
     Walks bids_root with os.walk (skipping the dcm2bids ``tmp_dcm2bids``
     scratch directory) and emits one row per .nii.gz, then copies the static
-    scans.json sidecar alongside it. When a scans.tsv is already present, rows
-    are merged by ``filename``: a row already present in scans.tsv is always
+    mriscans.json sidecar alongside it. When a mriscans.tsv is already present, rows
+    are merged by ``filename``: a row already present in mriscans.tsv is always
     kept exactly as-is (preserving any reviewer edits), even if its
     generator-owned fields have since drifted — such drift is only reported as
     a WARNING, never applied. Only rows for files that are newly present on
-    disk (their filename absent from the current scans.tsv) are appended. This
+    disk (their filename absent from the current mriscans.tsv) are appended. This
     lets separate sessions be converted at different times, appending to
-    scans.tsv without disturbing already-reviewed rows.
+    mriscans.tsv without disturbing already-reviewed rows.
 
     Returns the number of preserved rows whose file is no longer found on
     disk, for the caller to fold into an end-of-run summary.
@@ -446,7 +446,7 @@ def _generate_scans_tsv(bids_root: Path) -> int:
     if not bids_root.is_dir():
         return 0
 
-    tsv_path = bids_root / "scans.tsv"
+    tsv_path = bids_root / "mriscans.tsv"
 
     try:
         import nibabel as nib
@@ -454,7 +454,7 @@ def _generate_scans_tsv(bids_root: Path) -> int:
         nib = None
         _safe_print(
             "WARNING: nibabel not installed; the 'dimensions' column in "
-            "scans.tsv will be empty. Install nibabel to populate it."
+            "mriscans.tsv will be empty. Install nibabel to populate it."
         )
 
     rows: list[list] = []
@@ -503,7 +503,7 @@ def _generate_scans_tsv(bids_root: Path) -> int:
                 old_row = existing_by_name[name]
                 merged_rows.append([old_row.get(c, "") for c in _SCANS_COLUMNS])
             else:
-                # Newly present on disk and absent from scans.tsv: add it.
+                # Newly present on disk and absent from mriscans.tsv: add it.
                 merged_rows.append(new_by_name[name])
                 added += 1
 
@@ -522,10 +522,10 @@ def _generate_scans_tsv(bids_root: Path) -> int:
     src_json = _find_scans_json()
     if src_json is None:
         _safe_print(
-            "WARNING: scans.json data dictionary not found; skipping the sidecar copy."
+            "WARNING: mriscans.json data dictionary not found; skipping the sidecar copy."
         )
     else:
-        shutil.copyfile(src_json, bids_root / "scans.json")
+        shutil.copyfile(src_json, bids_root / "mriscans.json")
 
     return missing_count
 
@@ -541,7 +541,7 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
     output_dir = Path(args.output).resolve()
 
     # --maps: skip the dcm2bids conversion entirely and only (re)generate the
-    # scans.tsv/scans.json tabular outputs for every project in scope from the
+    # mriscans.tsv/mriscans.json tabular outputs for every project in scope from the
     # already-converted BIDS data under OUTPUT_DIR. The config, pydicom, and the
     # dcm2bids/dcm2niix tools are unused on this path, so none are required.
     if args.maps:
@@ -556,7 +556,7 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
             missing_total += _generate_scans_tsv(output_dir / project)
         if missing_total:
             print(
-                f"WARNING: {missing_total} scans.tsv row(s) across all "
+                f"WARNING: {missing_total} mriscans.tsv row(s) across all "
                 "project(s) in scope reference file(s) no longer found on "
                 "disk (rows preserved; see WARNING(s) above)."
             )
@@ -663,7 +663,7 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
         missing_total += _generate_scans_tsv(output_dir / project)
     if missing_total:
         print(
-            f"WARNING: {missing_total} scans.tsv row(s) across all "
+            f"WARNING: {missing_total} mriscans.tsv row(s) across all "
             "project(s) in scope reference file(s) no longer found on disk "
             "(rows preserved; see WARNING(s) above)."
         )

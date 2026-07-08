@@ -1,12 +1,12 @@
 import argparse
 import sys
 
+from .bidsmap import bidsmap_cmd
 from .cubids import cubids_cmd
 from .download import download_cmd
 from .login import login_cmd
 from .mriconvert import mriconvert_cmd
 from .mrihelp import mrihelp_cmd
-from .mrimap import mrimap_cmd
 from .physioconvert import physioconvert_cmd
 from .query import query_cmd
 
@@ -289,8 +289,8 @@ def build_parser() -> argparse.ArgumentParser:
         "-m",
         "--maps",
         action="store_true",
-        help="Skip the dcm2bids conversion; only (re)generate scans.tsv (and "
-        "copy scans.json) for every project in scope from the already-converted "
+        help="Skip the dcm2bids conversion; only (re)generate mriscans.tsv (and "
+        "copy mriscans.json) for every project in scope from the already-converted "
         "BIDS data under OUTPUT_DIR. -c/--config, pydicom, dcm2bids, and "
         "dcm2niix are not required with this option.",
     )
@@ -326,21 +326,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cubids_parser.set_defaults(func=cubids_cmd)
 
-    mrimap_parser = subparsers.add_parser(
-        "mrimap",
+    bidsmap_parser = subparsers.add_parser(
+        "bidsmap",
         help="Generate (or update) a participant/session map TSV for a BIDS "
-        "dataset at INPUT_DIR/PROJECT/.",
+        "dataset at INPUT_DIR/PROJECT/, for either the mri or physio modality.",
     )
-    mrimap_parser.add_argument(
+    bidsmap_parser.add_argument(
         "-i",
         "--input",
         required=True,
         metavar="INPUT_DIR",
-        help="BIDS root directory holding the dataset at INPUT_DIR/PROJECT/ "
-        "(i.e., the output of `xnatcli mriconvert`). The map TSV is written "
-        "here as PROJECT-<PROJECT>_mrimap.tsv.",
+        help="Root directory holding the BIDS dataset at INPUT_DIR/PROJECT/ "
+        "(i.e., the output of `xnatcli mriconvert` for -m mri, or the parent "
+        "of `xnatcli physioconvert`'s OUTPUT_DIR/PROJECT/ for -m physio). The "
+        "map TSV is written here as PROJECT-<PROJECT>_bidsmap.tsv.",
     )
-    mrimap_parser.add_argument(
+    bidsmap_parser.add_argument(
         "-p",
         "--project",
         required=True,
@@ -348,18 +349,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Project directory name under INPUT_DIR identifying the BIDS "
         "dataset to scan for participants and sessions.",
     )
-    mrimap_parser.add_argument(
+    bidsmap_parser.add_argument(
+        "-m",
+        "--modality",
+        required=True,
+        choices=["mri", "physio"],
+        help="Which BIDS dataset shape INPUT_DIR/PROJECT/ holds. 'mri' expects "
+        ".nii.gz files with .json/.bval/.bvec sidecars and honors "
+        "mriscans.tsv's rename column and QC-exclusion columns; on -o its "
+        "manifest is promoted to scans.tsv/scans.json in the mapped output. "
+        "'physio' expects .tsv.gz files with .json sidecars and honors "
+        "physioscans.tsv's rename column and QC-exclusion columns the same "
+        "way (rename only applies when a source produced a single output "
+        "file); its manifest stays named physioscans.tsv/physioscans.json "
+        "(not promoted to scans.tsv, so it never collides with mri's) and "
+        "patches physioscans.tsv instead of participants.tsv.",
+    )
+    bidsmap_parser.add_argument(
         "-o",
         "--output",
         metavar="OUTPUT_DIR",
-        help="When provided, apply all renames from PROJECT-<PROJECT>_mrimap.tsv "
-        "(participant_rename, session_rename) and INPUT_DIR/PROJECT/scans.tsv "
-        "(rename column) by recursively copying the BIDS dataset to "
-        "OUTPUT_DIR/PROJECT/ with every rename applied. The map TSV generation "
-        "always runs first regardless. OUTPUT_DIR/PROJECT/ must not already "
-        "exist. Skips tmp_dcm2bids and tmp_phys2bids scratch directories.",
+        help="When provided, apply all renames from PROJECT-<PROJECT>_bidsmap.tsv "
+        "(participant_rename, session_rename) — and the modality's own manifest "
+        "rename column (see -m/--modality) — by recursively copying the BIDS "
+        "dataset to OUTPUT_DIR/PROJECT/ with every rename applied. The map TSV "
+        "generation always runs first regardless. OUTPUT_DIR/PROJECT/ must not "
+        "already exist. Skips tmp_dcm2bids, tmp_phys2bids, and log scratch "
+        "directories.",
     )
-    mrimap_parser.set_defaults(func=mrimap_cmd)
+    bidsmap_parser.set_defaults(func=bidsmap_cmd)
 
     physioconvert_parser = subparsers.add_parser(
         "physioconvert",
@@ -389,9 +407,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="OUTPUT_DIR",
         help="Directory to write BIDS physio files into. Each project's "
         "physio outputs land under OUTPUT_DIR/PROJECT/, where a "
-        "physioconvert_map.tsv (source path and best-guess BIDS entities) and a "
-        "physioconvert_qc.tsv (per-file metrics), each with a .json data "
-        "dictionary, are written/updated at its root.",
+        "physioscans.tsv (source path, best-guess BIDS entities, per-file "
+        "metrics, and bids_name/rename/QC review columns) and its "
+        "physioscans.json data dictionary are written/updated at its root.",
     )
     physioconvert_parser.add_argument(
         "-n",
@@ -414,10 +432,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--maps",
         action="store_true",
         help="Skip the phys2bids conversion; only (re)generate "
-        "physioconvert_map.tsv and physioconvert_qc.tsv (and copy their JSON "
-        "data dictionaries) by re-reading each physio file's metrics and "
-        "entities, preserving the converted output paths from the existing "
-        "physioconvert_qc.tsv.",
+        "physioscans.tsv (and copy its JSON data dictionary) by re-reading "
+        "each physio file's metrics and entities, preserving the converted "
+        "output paths and bids_name/rename/QC review columns from the "
+        "existing physioscans.tsv.",
     )
     physioconvert_parser.set_defaults(func=physioconvert_cmd)
 

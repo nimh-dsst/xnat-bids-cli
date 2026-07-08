@@ -9,18 +9,12 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-from .mrimap import _blank_map, _merge_existing, _scan_pairs
+# Combined map+QC TSV written at the output (BIDS project) root, mirroring
+# mriconvert's mriscans.tsv/scans.tsv for physio recordings.
+_SCANS_FILENAME = "physioscans.tsv"
 
-# Mapping TSV written at the output (BIDS project) root.
-_MAP_FILENAME = "physioconvert_map.tsv"
-
-# QC TSV written alongside the map; holds the per-file metrics regenerated every
-# run (channel/frequency info, converted output paths, sample counts/durations).
-_QC_FILENAME = "physioconvert_qc.tsv"
-
-# Static data-dictionary sidecars copied next to the two TSVs on each run.
-_MAP_DICT_FILENAME = "physioconvert_map.json"
-_QC_DICT_FILENAME = "physioconvert_qc.json"
+# Static data-dictionary sidecar copied next to the TSV on each run.
+_SCANS_DICT_FILENAME = "physioscans.json"
 
 # BIDS suffix for continuous physiological recordings.
 _SUFFIX = "physio"
@@ -29,7 +23,7 @@ _SUFFIX = "physio"
 # limited to these and every match is validated by actually loading it.
 _SUPPORTED_EXTS = {".acq", ".txt", ".mat", ".gep", ".smr"}
 
-# Columns the user is meant to edit in physioconvert_map.tsv.
+# BIDS entity columns the user edits pre-conversion to drive file placement.
 _EDITABLE_COLUMNS = [
     "participant_id",
     "session_id",
@@ -38,22 +32,36 @@ _EDITABLE_COLUMNS = [
     "acquisition",
     "run",
 ]
-# physioconvert_map.tsv holds the editable BIDS entities plus the regenerated
-# status. The converted output path(s) live in physioconvert_qc.tsv (column
-# ``output_files``, joinable on ``source_path``) and the log's
-# DESTINATION_PATH column.
-_MAP_COLUMNS = ["source_path", "status"] + _EDITABLE_COLUMNS
-# physioconvert_qc.tsv holds the per-file metrics the tool regenerates every
-# run; it shares the source_path index key and the status column with the map.
-_QC_COLUMNS = [
-    "source_path",
-    "status",
-    "n_channels",
-    "sampling_frequencies",
-    "sample_count",
-    "duration_seconds",
-    "output_files",
+# Post-conversion review columns the user edits by hand, mirroring mriconvert's
+# scans.tsv QC block. Never regenerated once set — preserved across runs
+# exactly like _EDITABLE_COLUMNS. ``rename`` only applies to a source that
+# produced exactly one output file (see ``_load_rename_map`` in bidsmap.py).
+_QC_EDIT_COLUMNS = [
+    "rename",
+    "recommend_for_use",
+    "complete",
+    "usable",
+    "qc_rating",
+    "rating_reason",
+    "qc_notes",
 ]
+# physioscans.tsv holds: the editable entities, the regenerated status/metrics
+# (channel/frequency info, converted output path(s)), a regenerated bids_name
+# (derived from the current output(s), comma-aligned with output_files), and
+# the user-owned QC/rename block.
+_SCANS_COLUMNS = (
+    ["source_path", "status"]
+    + _EDITABLE_COLUMNS
+    + [
+        "n_channels",
+        "sampling_frequencies",
+        "sample_count",
+        "duration_seconds",
+        "output_files",
+        "bids_name",
+    ]
+    + _QC_EDIT_COLUMNS
+)
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 
@@ -606,7 +614,7 @@ def _run_worker(task: tuple[str, str, bool]) -> dict:
     When ``maps`` (the third task element) is True, the phys2bids conversion is
     skipped: the file is still loaded to recompute its metrics, but no staging
     directory is produced (placement and prior-output paths are handled in the
-    main process from the existing physioconvert_qc.tsv).
+    main process from the existing physioscans.tsv).
     """
     input_root_str, path_str, maps = task
     path = Path(path_str)
@@ -742,7 +750,7 @@ def _relocate_existing_outputs(
     name_known: bool,
     base_stem: str,
 ) -> tuple[str, list[str], str | None]:
-    """Move already-converted outputs to match edited physioconvert_map.tsv entities.
+    """Move already-converted outputs to match edited physioscans.tsv entities.
 
     Maps-mode counterpart to ``_place_staged``: instead of re-running phys2bids,
     it relocates the ``.tsv.gz``/``.json`` pair(s) a source produced on an
@@ -810,36 +818,19 @@ def _relocate_existing_outputs(
     return status, new_rels, detail
 
 
-def _read_existing_map(map_path: Path) -> dict[str, dict[str, str]]:
-    """Load an existing physioconvert_map.tsv as full rows keyed by ``source_path``.
+def _read_existing_scans(scans_path: Path) -> dict[str, dict[str, str]]:
+    """Load an existing physioscans.tsv as full rows keyed by ``source_path``.
 
-    The whole row is kept so editable entity columns (whose user edits, including
-    intentional blanks, must be preserved) are available when merging.
+    The whole row is kept so editable entity columns and the user-owned
+    QC/rename columns (whose edits, including intentional blanks, must be
+    preserved) are available when merging, and so an already-converted file's
+    regenerated metrics can be preserved verbatim when its conversion is
+    skipped. Empty when the file is absent.
     """
-    if not map_path.is_file():
+    if not scans_path.is_file():
         return {}
     existing: dict[str, dict[str, str]] = {}
-    with map_path.open(newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        for row in reader:
-            src = row.get("source_path")
-            if not src:
-                continue
-            existing[src] = {k: (v if v is not None else "") for k, v in row.items()}
-    return existing
-
-
-def _read_existing_qc(qc_path: Path) -> dict[str, dict[str, str]]:
-    """Load an existing physioconvert_qc.tsv as full rows keyed by ``source_path``.
-
-    The whole row is kept so an already-converted file's regenerated metrics
-    (channel/frequency info, sample counts, output paths) can be preserved
-    verbatim when its conversion is skipped. Empty when the QC file is absent.
-    """
-    if not qc_path.is_file():
-        return {}
-    existing: dict[str, dict[str, str]] = {}
-    with qc_path.open(newline="", encoding="utf-8") as f:
+    with scans_path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             src = row.get("source_path")
@@ -858,9 +849,9 @@ def _has_existing_outputs(
 ) -> bool:
     """Whether ``rel`` was already converted and its outputs are still on disk.
 
-    True when the prior map status indicates it was converted (``CONVERTED``,
+    True when the prior status indicates it was converted (``CONVERTED``,
     ``DATES_DISAGREE``, or ``UNKNOWN_NAME`` — the tmp_phys2bids staging) *and*
-    every output path recorded for it in physioconvert_qc.tsv still exists on disk. Such
+    every output path recorded for it in physioscans.tsv still exists on disk. Such
     a file is never re-converted: its outputs are instead relocated to match the
     (possibly edited) map. A file with no recorded outputs, a missing output, or
     any other status (``CONVERT_ERROR``, ``NOT_PHYSIO``, …) is (re-)converted.
@@ -896,7 +887,7 @@ def _resolve_entities(
 ) -> tuple[dict[str, str], dict]:
     """Entity values for a file: user-edited if present, else derived.
 
-    Editable values from an existing physioconvert_map.tsv take precedence (including
+    Editable values from an existing physioscans.tsv take precedence (including
     intentional blanks); any column missing from an older file falls back to a
     fresh derivation. Returns ``(entities, date_info)``; ``date_info`` gains an
     ``overridden`` flag that is True when the user has changed ``session_id``
@@ -915,27 +906,43 @@ def _resolve_entities(
     return entities, date_info
 
 
-def _preserve_map_row(
+def _resolve_qc_edits(rel_path: str, existing: dict[str, dict[str, str]]) -> dict[str, str]:
+    """Carry forward the user-owned QC/rename columns from a prior row.
+
+    Unlike the entity columns, these are never derived — purely preserved
+    verbatim (blank if there is no prior row), exactly like mriconvert's
+    scans.tsv QC block.
+    """
+    prior = existing.get(rel_path, {})
+    return {col: prior.get(col, "") for col in _QC_EDIT_COLUMNS}
+
+
+def _preserve_scans_row(
     rel_path: str, prior: dict[str, str], status: str
 ) -> dict[str, str]:
-    """Rebuild a map row from preserved editable values plus a status.
+    """Rebuild a row from preserved editable/QC values plus a status, with
+    blank metrics.
 
-    Used for files that were in a prior map but are now missing or no longer
-    readable as physio, so the user's manual edits are not lost.
+    Used for files that were in a prior physioscans.tsv but are now missing or
+    no longer readable as physio, so the user's manual edits are not lost.
     """
-    row: dict[str, str] = {"source_path": rel_path}
-    for col in _EDITABLE_COLUMNS:
+    row: dict[str, str] = {"source_path": rel_path, "status": status}
+    for col in _EDITABLE_COLUMNS + _QC_EDIT_COLUMNS:
         row[col] = prior.get(col, "")
-    row["status"] = status
+    for col in (
+        "n_channels", "sampling_frequencies", "sample_count",
+        "duration_seconds", "output_files", "bids_name",
+    ):
+        row[col] = ""
     return row
 
 
-def _converted_result(rel: str, prior_qc: dict[str, str]) -> dict:
+def _converted_result(rel: str, prior_row: dict[str, str]) -> dict:
     """Build a ``_run_worker``-shaped result for an already-converted file.
 
     Lets an already-converted file be fed through ``_finish`` (in relocate mode)
     without re-running phys2bids or re-reading the file: the channel/frequency
-    metrics are carried over verbatim from its prior physioconvert_qc.tsv row, and only
+    metrics are carried over verbatim from its prior physioscans.tsv row, and only
     the output paths are refreshed by the relocation. Marked ``is_physio`` with no
     staging so ``_finish`` takes the relocate-existing-outputs branch.
     """
@@ -945,34 +952,31 @@ def _converted_result(rel: str, prior_qc: dict[str, str]) -> dict:
         "is_physio": True,
         "reader_missing": False,
         "err": None,
-        "n_ch": prior_qc.get("n_channels", ""),
-        "freqs": prior_qc.get("sampling_frequencies", ""),
-        "sample_count": prior_qc.get("sample_count", ""),
-        "duration_seconds": prior_qc.get("duration_seconds", ""),
+        "n_ch": prior_row.get("n_channels", ""),
+        "freqs": prior_row.get("sampling_frequencies", ""),
+        "sample_count": prior_row.get("sample_count", ""),
+        "duration_seconds": prior_row.get("duration_seconds", ""),
         "staging": None,
         "convert_error": None,
     }
 
 
-def _qc_row(
-    rel_path: str,
-    n_channels: str,
-    sampling_frequencies: str,
-    output_files: str,
-    sample_count: str,
-    duration_seconds: str,
-    status: str,
-) -> dict[str, str]:
-    """Assemble one physioconvert_qc.tsv row; blank metrics for non-converted files."""
-    return {
-        "source_path": rel_path,
-        "n_channels": n_channels,
-        "sampling_frequencies": sampling_frequencies,
-        "output_files": output_files,
-        "sample_count": sample_count,
-        "duration_seconds": duration_seconds,
-        "status": status,
-    }
+def _bids_name_of(output_file: str, entities: dict[str, str]) -> str:
+    """The portion of an output file's basename after its sub[_ses]_ prefix
+    and before ``.tsv.gz``, mirroring mriconvert's scans.tsv ``bids_name``."""
+    name = Path(output_file).name
+    if name.endswith(".tsv.gz"):
+        name = name[: -len(".tsv.gz")]
+    prefix = entities["participant_id"]
+    if entities["session_id"]:
+        prefix += f"_{entities['session_id']}"
+    prefix += "_"
+    return name[len(prefix):] if name.startswith(prefix) else name
+
+
+def _bids_names_of(output_files: list[str], entities: dict[str, str]) -> str:
+    """Comma-separated ``bids_name`` values aligned with ``output_files``."""
+    return ",".join(_bids_name_of(f, entities) for f in output_files)
 
 
 def _find_asset(name: str) -> Path | None:
@@ -987,56 +991,16 @@ def _find_asset(name: str) -> Path | None:
     return None
 
 
-def _copy_data_dictionaries(output_dir: Path) -> None:
-    """Copy the physioconvert_map/physioconvert_qc JSON data dictionaries next to the TSVs.
+def _copy_data_dictionary(output_dir: Path) -> None:
+    """Copy the physioscans.json data dictionary next to physioscans.tsv.
 
-    Run once after all conversions so each output directory carries the column
-    descriptions for both TSVs. A missing asset is warned about, not fatal.
+    Run once after all conversions. A missing asset is warned about, not fatal.
     """
-    for asset, dest_name in (
-        (_MAP_DICT_FILENAME, _MAP_DICT_FILENAME),
-        (_QC_DICT_FILENAME, _QC_DICT_FILENAME),
-    ):
-        src = _find_asset(asset)
-        if src is None:
-            print(f"WARNING: {asset} data dictionary not found; skipping its copy.")
-        else:
-            shutil.copyfile(src, output_dir / dest_name)
-
-
-def _write_physiomap(output_dir: Path, project: str) -> Path | None:
-    """Write/update ``PROJECT-<project>_physiomap.tsv`` next to ``output_dir``.
-
-    Modeled after ``mrimap``'s participant/session map: scans ``output_dir``
-    (the physio project directory) for ``sub-*/[ses-*/]`` pairs and maps each
-    ``participant_id`` to a blank ``participant_rename`` (and, when the output
-    uses sessions, each ``session_id`` to a blank ``session_rename``), merging
-    with any prior file so existing rename edits are preserved. Returns the
-    path written, or ``None`` if no ``sub-*`` directories were found yet.
-    """
-    rows, has_sessions, skipped = _scan_pairs(output_dir)
-    if not rows:
-        return None
-    if skipped:
-        print(
-            "Warning: the physio output uses sessions but these participants "
-            f"have no ses-* subdirectory and were skipped: {', '.join(skipped)}",
-            file=sys.stderr,
-        )
-
-    fresh = _blank_map(rows, has_sessions)
-    physiomap_path = output_dir.parent / f"PROJECT-{project}_physiomap.tsv"
-    if physiomap_path.exists():
-        merged, added = _merge_existing(fresh, physiomap_path)
-        merged.to_csv(physiomap_path, sep="\t", index=False, na_rep="")
-        print(
-            f"Updated {physiomap_path} ({added} new row{'s' if added != 1 else ''} "
-            f"added, {len(merged)} total)."
-        )
+    src = _find_asset(_SCANS_DICT_FILENAME)
+    if src is None:
+        print(f"WARNING: {_SCANS_DICT_FILENAME} data dictionary not found; skipping its copy.")
     else:
-        fresh.to_csv(physiomap_path, sep="\t", index=False, na_rep="")
-        print(f"Wrote {physiomap_path} ({len(fresh)} rows).")
-    return physiomap_path
+        shutil.copyfile(src, output_dir / _SCANS_DICT_FILENAME)
 
 
 def physioconvert_cmd(args: argparse.Namespace) -> int:
@@ -1078,15 +1042,13 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         print(f"No phys2bids-supported files found under {input_root}; nothing to do.")
         return 0
 
-    map_path = output_dir / _MAP_FILENAME
-    qc_path = output_dir / _QC_FILENAME
-    existing = _read_existing_map(map_path)
-    # Prior QC rows (kept whole) supply the converted-output paths that drive the
-    # idempotent cleanup of a source's earlier outputs on re-conversion, and let
-    # an already-converted file's metrics be preserved verbatim when skipped.
-    existing_qc = _read_existing_qc(qc_path)
+    scans_path = output_dir / _SCANS_FILENAME
+    existing = _read_existing_scans(scans_path)
+    # Prior output_files (kept whole in `existing`) drive the idempotent cleanup
+    # of a source's earlier outputs on re-conversion, and let an already-converted
+    # file's metrics/bids_name be preserved verbatim when skipped.
     existing_outputs = {
-        src: row.get("output_files", "") for src, row in existing_qc.items()
+        src: row.get("output_files", "") for src, row in existing.items()
     }
 
     log_path: Path | None = None
@@ -1108,19 +1070,17 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         STATUS_CONVERT_ERROR: 0,
         STATUS_MISSING: 0,
     }
-    map_rows: list[dict[str, str]] = []
-    qc_rows: list[dict[str, str]] = []
+    scans_rows: list[dict[str, str]] = []
     handled: set[str] = set()
     # Files already converted on a prior run are relocated (not re-converted);
     # this tallies how many for the summary.
     skipped = 0
 
     def _finish(result: dict, maps: bool) -> None:
-        """Place a completed conversion and record its rows — main process only.
+        """Place a completed conversion and record its row — main process only.
 
         Runs serially regardless of -n, so BIDS naming/collision handling and
-        the shared counts/rows/log are never touched concurrently. The map and
-        QC rows are appended in lockstep so the two TSVs share a row set.
+        the shared counts/rows/log are never touched concurrently.
 
         When ``maps`` is True the file's already-converted outputs are relocated
         to match the (possibly edited) entities rather than converted afresh —
@@ -1138,11 +1098,10 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             counts[status] += 1
             print(f"{rel}: {status} — {result['err'] or 'no physio channels'}")
             log_writer.write(start, rel, status)
-            # Preserve a prior row's edits if this file used to be physio; the QC
-            # row carries the same status with blank metrics.
+            # Preserve a prior row's edits if this file used to be physio, with
+            # blank metrics.
             if rel in existing:
-                map_rows.append(_preserve_map_row(rel, existing[rel], status))
-                qc_rows.append(_qc_row(rel, "", "", "", "", "", status))
+                scans_rows.append(_preserve_scans_row(rel, existing[rel], status))
             return
 
         path = input_root / rel
@@ -1223,24 +1182,23 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         print(line)
         log_writer.write(start, rel, status, written)
 
-        output_files = ",".join(written)
-        map_rows.append({"source_path": rel, **entities, "status": status})
-        qc_rows.append(
-            _qc_row(
-                rel,
-                result["n_ch"],
-                result["freqs"],
-                output_files,
-                result["sample_count"],
-                result["duration_seconds"],
-                status,
-            )
-        )
+        scans_rows.append({
+            "source_path": rel,
+            "status": status,
+            **entities,
+            "n_channels": result["n_ch"],
+            "sampling_frequencies": result["freqs"],
+            "sample_count": result["sample_count"],
+            "duration_seconds": result["duration_seconds"],
+            "output_files": ",".join(written),
+            "bids_name": _bids_names_of(written, entities) if written else "",
+            **_resolve_qc_edits(rel, existing),
+        })
 
     # On a plain run, any file already converted (with its outputs still on disk)
     # is relocated to match the map instead of being re-converted: it is fed
     # through _finish in relocate mode using its preserved metrics, so edits to
-    # its physioconvert_map.tsv row always rename/move its outputs without re-running
+    # its physioscans.tsv row always rename/move its outputs without re-running
     # phys2bids. Files lacking outputs (new, or a prior CONVERT_ERROR/NOT_PHYSIO)
     # still go to the converter. Under -m/--maps every file already takes the
     # relocate path, so this split is bypassed.
@@ -1251,7 +1209,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             rel, existing, existing_outputs, output_dir
         ):
             skipped += 1
-            _finish(_converted_result(rel, existing_qc[rel]), maps=True)
+            _finish(_converted_result(rel, existing[rel]), maps=True)
         else:
             to_convert.append(path)
 
@@ -1275,22 +1233,19 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
                     _finish(pending.pop(next_index), args.maps)
                     next_index += 1
 
-    # Preserve rows for files in a prior map that are no longer on disk so the
-    # user's edits are not lost; flag them as MISSING.
+    # Preserve rows for files in a prior physioscans.tsv that are no longer on
+    # disk so the user's edits are not lost; flag them as MISSING.
     for rel, prior in existing.items():
         if rel in handled:
             continue
         counts[STATUS_MISSING] += 1
         print(f"{rel}: {STATUS_MISSING} — source file not found under input")
         log_writer.write(_logging_now(), rel, STATUS_MISSING)
-        map_rows.append(_preserve_map_row(rel, prior, STATUS_MISSING))
-        qc_rows.append(_qc_row(rel, "", "", "", "", "", STATUS_MISSING))
+        scans_rows.append(_preserve_scans_row(rel, prior, STATUS_MISSING))
 
-    # Both TSVs are indexed by, and sorted by, source_path.
-    _write_tsv(map_path, map_rows, _MAP_COLUMNS)
-    _write_tsv(qc_path, qc_rows, _QC_COLUMNS)
-    _copy_data_dictionaries(output_dir)
-    physiomap_path = _write_physiomap(output_dir, args.project)
+    # physioscans.tsv is indexed by, and sorted by, source_path.
+    _write_tsv(scans_path, scans_rows, _SCANS_COLUMNS)
+    _copy_data_dictionary(output_dir)
 
     total = sum(counts.values())
     print(f"\nProcessed {total} file(s):")
@@ -1309,10 +1264,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             f"  ({skipped} already converted on a prior run; not re-converted, "
             "outputs relocated to match the map as needed)"
         )
-    print(f"Mapping written to {map_path}")
-    print(f"QC table written to {qc_path}")
-    if physiomap_path is not None:
-        print(f"Physiomap written to {physiomap_path}")
+    print(f"physioscans.tsv written to {scans_path}")
     if log_path is not None:
         print(f"Log written to {log_path}")
     if counts[STATUS_DATES_DISAGREE]:
@@ -1320,13 +1272,13 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             "Some files have a filename date that disagrees with their "
             "last-modified date (status DATES_DISAGREE); they were converted "
             "using the last-modified date. Review and set session_id in "
-            "physioconvert_map.tsv if the filename date is correct."
+            "physioscans.tsv if the filename date is correct."
         )
     if counts[STATUS_UNKNOWN_NAME]:
         print(
             f"Some files were converted into {_TMP_DIRNAME}/ with UNKNOWN_NAME "
             "because participant_id is blank (the filename did not start with a "
-            "participant label). Fill in participant_id in physioconvert_map.tsv and "
+            "participant label). Fill in participant_id in physioscans.tsv and "
             f"re-run to place them properly (the {_TMP_DIRNAME}/ copy is removed "
             "then)."
         )
