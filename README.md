@@ -292,7 +292,7 @@ The columns, in order:
 | `rating_reason` | Empty — free-text reason for `qc_rating`. |
 | `qc_notes` | Empty — free-text QC notes. |
 
-`mriscans.json` additionally carries a top-level `PhysioParent` key (`{"Description": ..., "Value": "<path or empty>"}`) recording the absolute path passed via `-y/--physio`, the flat directory holding every raw physio recording for the project.
+`mriscans.json` additionally carries a top-level `PhysioParent` key (`{"Description": ..., "Value": "<path or empty>"}`), always the first key in the file, recording the absolute path passed via `-y/--physio`, the flat directory holding every raw physio recording for the project.
 
 ## `xnatcli cubids`
 
