@@ -42,27 +42,25 @@ _SCANS_COLUMNS = [
     "series_number",
     "dimensions",
     "size_bytes",
+    "participant_id",
+    "session_id",
+    "datatype",
+    "suffix",
     "bids_name",
     "rename",
+    "physio",
     "recommend_for_use",
     "complete",
     "usable",
     "qc_rating",
     "rating_reason",
     "qc_notes",
-    "participant_id",
-    "session_id",
-    "datatype",
-    "task",
-    "acquisition",
-    "echo",
-    "run",
-    "suffix",
 ]
 # Columns the generator always writes empty; user-entered text in any of them
 # means the file has been reviewed and must not be regenerated over.
 _SCANS_USER_COLUMNS = (
     "rename",
+    "physio",
     "recommend_for_use",
     "complete",
     "usable",
@@ -72,10 +70,6 @@ _SCANS_USER_COLUMNS = (
 )
 _SUB_RE = re.compile(r"(sub-[A-Za-z0-9]+)")
 _SES_RE = re.compile(r"(ses-[A-Za-z0-9]+)")
-_TASK_RE = re.compile(r"task-([A-Za-z0-9]+)")
-_ACQ_RE = re.compile(r"acq-([A-Za-z0-9]+)")
-_ECHO_RE = re.compile(r"echo-([A-Za-z0-9]+)")
-_RUN_RE = re.compile(r"run-([A-Za-z0-9]+)")
 _BIDS_NAME_RE = re.compile(r"^sub-[A-Za-z0-9]+_ses-[A-Za-z0-9]+_(.+)\.nii\.gz$")
 
 _print_lock = threading.Lock()
@@ -299,10 +293,6 @@ def _scans_row(nii_path: Path, bids_root: Path, nib) -> list:
     name_match = _BIDS_NAME_RE.match(basename)
     sub_match = _SUB_RE.search(basename)
     ses_match = _SES_RE.search(basename)
-    task_match = _TASK_RE.search(basename)
-    acq_match = _ACQ_RE.search(basename)
-    echo_match = _ECHO_RE.search(basename)
-    run_match = _RUN_RE.search(basename)
     stem = basename[:-7] if basename.endswith(".nii.gz") else basename
 
     return [
@@ -311,22 +301,19 @@ def _scans_row(nii_path: Path, bids_root: Path, nib) -> list:
         sidecar.get("SeriesNumber", ""),
         _nii_dimensions(nii_path, nib),
         size_bytes,
+        sub_match.group(1) if sub_match else "",
+        ses_match.group(1) if ses_match else "",
+        nii_path.parent.name,
+        stem.rsplit("_", 1)[-1],
         name_match.group(1) if name_match else "",
         "",  # rename — for the end-user
+        "",  # physio — for the end-user
         "",  # recommend_for_use — for the end-user
         "",  # complete — for the end-user
         "",  # usable — for the end-user
         "",  # qc_rating — for the end-user
         "",  # rating_reason — for the end-user
         "",  # qc_notes — for the end-user
-        sub_match.group(1) if sub_match else "",
-        ses_match.group(1) if ses_match else "",
-        nii_path.parent.name,
-        f"task-{task_match.group(1)}" if task_match else "",
-        f"acq-{acq_match.group(1)}" if acq_match else "",
-        f"echo-{echo_match.group(1)}" if echo_match else "",
-        f"run-{run_match.group(1)}" if run_match else "",
-        stem.rsplit("_", 1)[-1],
     ]
 
 
@@ -340,6 +327,47 @@ def _find_scans_json() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def _write_scans_json(bids_root: Path, physio_parent: Path | None) -> None:
+    """Write mriscans.json from the static asset, injecting ``PhysioParent``.
+
+    Loads the static data dictionary (never mutated in place) and sets
+    ``PhysioParent.Value`` to ``physio_parent`` when given. When
+    ``physio_parent`` is None, preserves whatever ``PhysioParent.Value`` was
+    already recorded in the destination mriscans.json from a prior run, if
+    any, so omitting ``-y`` on a rerun doesn't erase it.
+    """
+    src_json = _find_scans_json()
+    if src_json is None:
+        _safe_print(
+            "WARNING: mriscans.json data dictionary not found; skipping the sidecar write."
+        )
+        return
+
+    try:
+        with src_json.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        _safe_print(f"WARNING: could not read {src_json}: {exc}; skipping the sidecar write.")
+        return
+
+    dest_json = bids_root / "mriscans.json"
+    if physio_parent is not None:
+        data.setdefault("PhysioParent", {})["Value"] = str(physio_parent)
+    elif dest_json.is_file():
+        try:
+            with dest_json.open(encoding="utf-8") as f:
+                prior = json.load(f)
+            prior_value = prior.get("PhysioParent", {}).get("Value", "")
+            if prior_value:
+                data.setdefault("PhysioParent", {})["Value"] = prior_value
+        except (OSError, ValueError):
+            pass
+
+    with dest_json.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+        f.write("\n")
 
 
 def _read_existing_scans(
@@ -426,19 +454,24 @@ def _report_scans_deviations(
     )
 
 
-def _generate_scans_tsv(bids_root: Path) -> int:
+def _generate_scans_tsv(bids_root: Path, physio_parent: Path | None = None) -> int:
     """Write <bids_root>/mriscans.tsv from every .nii.gz under the dataset.
 
     Walks bids_root with os.walk (skipping the dcm2bids ``tmp_dcm2bids``
-    scratch directory) and emits one row per .nii.gz, then copies the static
-    mriscans.json sidecar alongside it. When a mriscans.tsv is already present, rows
-    are merged by ``filename``: a row already present in mriscans.tsv is always
-    kept exactly as-is (preserving any reviewer edits), even if its
-    generator-owned fields have since drifted — such drift is only reported as
-    a WARNING, never applied. Only rows for files that are newly present on
-    disk (their filename absent from the current mriscans.tsv) are appended. This
-    lets separate sessions be converted at different times, appending to
-    mriscans.tsv without disturbing already-reviewed rows.
+    scratch directory) and emits one row per .nii.gz, then writes the
+    mriscans.json sidecar alongside it (see ``_write_scans_json``). When a
+    mriscans.tsv is already present, rows are merged by ``filename``: a row
+    already present in mriscans.tsv is always kept exactly as-is (preserving
+    any reviewer edits), even if its generator-owned fields have since
+    drifted — such drift is only reported as a WARNING, never applied. Only
+    rows for files that are newly present on disk (their filename absent from
+    the current mriscans.tsv) are appended. This lets separate sessions be
+    converted at different times, appending to mriscans.tsv without
+    disturbing already-reviewed rows.
+
+    ``physio_parent``, when given, is recorded as the ``PhysioParent`` value
+    in mriscans.json; when omitted, a value already recorded there is
+    preserved (see ``_write_scans_json``).
 
     Returns the number of preserved rows whose file is no longer found on
     disk, for the caller to fold into an end-of-run summary.
@@ -519,13 +552,7 @@ def _generate_scans_tsv(bids_root: Path) -> int:
             "added; existing rows preserved)"
         )
 
-    src_json = _find_scans_json()
-    if src_json is None:
-        _safe_print(
-            "WARNING: mriscans.json data dictionary not found; skipping the sidecar copy."
-        )
-    else:
-        shutil.copyfile(src_json, bids_root / "mriscans.json")
+    _write_scans_json(bids_root, physio_parent)
 
     return missing_count
 
@@ -540,6 +567,10 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
 
     output_dir = Path(args.output).resolve()
 
+    physio_parent = Path(args.physio_parent).resolve() if args.physio_parent else None
+    if physio_parent is not None and not physio_parent.is_dir():
+        _safe_print(f"WARNING: -y/--physio directory not found: {physio_parent}")
+
     # --maps: skip the dcm2bids conversion entirely and only (re)generate the
     # mriscans.tsv/mriscans.json tabular outputs for every project in scope from the
     # already-converted BIDS data under OUTPUT_DIR. The config, pydicom, and the
@@ -553,7 +584,7 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
         sessions = _discover_sessions(input_root, args)
         missing_total = 0
         for project in sorted({p for p, _, _ in sessions}):
-            missing_total += _generate_scans_tsv(output_dir / project)
+            missing_total += _generate_scans_tsv(output_dir / project, physio_parent)
         if missing_total:
             print(
                 f"WARNING: {missing_total} mriscans.tsv row(s) across all "
@@ -660,7 +691,7 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
 
     missing_total = 0
     for project in sorted({p for p, _, _ in sessions}):
-        missing_total += _generate_scans_tsv(output_dir / project)
+        missing_total += _generate_scans_tsv(output_dir / project, physio_parent)
     if missing_total:
         print(
             f"WARNING: {missing_total} mriscans.tsv row(s) across all "

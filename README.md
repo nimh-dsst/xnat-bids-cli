@@ -28,8 +28,8 @@ The package is organized as:
 - [`src/xnatcli/mrihelp.py`](src/xnatcli/mrihelp.py) — runs `dcm2bids_helper` against a downloaded experiment directory.
 - [`src/xnatcli/mriconvert.py`](src/xnatcli/mriconvert.py) — converts downloaded XNAT sessions to BIDS via `dcm2bids`.
 - [`src/xnatcli/cubids.py`](src/xnatcli/cubids.py) — runs [`CuBIDS`](https://cubids.readthedocs.io/) `add-nifti-info` and `group` on a BIDS dataset.
-- [`src/xnatcli/bidsmap.py`](src/xnatcli/bidsmap.py) — generates/updates a participant/session mapping TSV for a BIDS dataset and, with `-o`, applies renames by copying the dataset to a new tree; shared by both the `mri` and `physio` modalities (uses [`pandas`](https://pandas.pydata.org/)).
-- [`src/xnatcli/physioconvert.py`](src/xnatcli/physioconvert.py) — converts physiological recordings found under a directory tree to BIDS physio files (uses [`phys2bids`](https://phys2bids.readthedocs.io/)).
+- [`src/xnatcli/bidsmap.py`](src/xnatcli/bidsmap.py) — generates/updates a participant/session mapping TSV for a `mriconvert`-produced BIDS dataset and, with `-o`, applies renames by copying the dataset to a new tree (uses [`pandas`](https://pandas.pydata.org/)).
+- [`src/xnatcli/physioconvert.py`](src/xnatcli/physioconvert.py) — converts physio recordings associated (via `mriconvert`'s `mriscans.tsv` `physio` column) with a BIDS dataset, placing them directly alongside their paired scan (uses [`phys2bids`](https://phys2bids.readthedocs.io/)).
 
 Credentials live in `~/.xnatcli/credentials.cfg`, a plain-text [configparser](https://docs.python.org/3/library/configparser.html) file with a single `[xnatcli]` section storing `server`, `username`, and `password`. The file is created via `os.open` with mode `0o600` and re-`chmod`-ed to `0o600` after writing so only the owner can read or write it. (On Windows, `os.chmod` only toggles the read-only bit — the permissions model there is ACL-based; the `0o600` call still runs for portability.)
 
@@ -250,20 +250,21 @@ Exit code is `0` if every processed session is `COMPLETE` or `EMPTY`, and `1` ot
 | `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv`. |
 | `-d`, `--delete` | *Optional.* After a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, delete its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT`. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |
 | `-m`, `--maps` | *Optional.* Skip the `dcm2bids` conversion and only (re)generate `mriscans.tsv` (and copy `mriscans.json`) for every project in scope from the already-converted BIDS data under `OUTPUT_DIR`. `-c/--config`, `pydicom`, `dcm2bids`, and `dcm2niix` are not required. |
+| `-y`, `--physio` | *Optional.* Absolute path to the flat directory holding all raw physio recordings for this project. Recorded as the top-level `PhysioParent` key in `mriscans.json` for [`xnatcli physioconvert`](#xnatcli-physioconvert) to resolve `mriscans.tsv`'s `physio` column against. If omitted, a `PhysioParent` recorded on a prior run is preserved. |
 
 ### Root-level `mriscans.tsv`
 
-At the end of every `mriconvert` run, a single dataset-wide `mriscans.tsv` is (re)generated at the project root, `<output>/PROJECT/mriscans.tsv`, by walking the dataset with `os.walk` for every `.nii.gz` file (the dcm2bids `tmp_dcm2bids/` scratch directory is skipped). The static data dictionary [`src/assets/mriscans.json`](src/assets/mriscans.json) is copied next to it as `<output>/PROJECT/mriscans.json`. Reading NIfTI shapes uses `nibabel`; if it is not installed, the `dimensions` column is left empty and a warning is printed.
+At the end of every `mriconvert` run, a single dataset-wide `mriscans.tsv` is (re)generated at the project root, `<output>/PROJECT/mriscans.tsv`, by walking the dataset with `os.walk` for every `.nii.gz` file (the dcm2bids `tmp_dcm2bids/` scratch directory is skipped). The data dictionary `<output>/PROJECT/mriscans.json` is (re)written next to it from the static [`src/assets/mriscans.json`](src/assets/mriscans.json) asset, with its `PhysioParent` value set from `-y/--physio` (see below). Reading NIfTI shapes uses `nibabel`; if it is not installed, the `dimensions` column is left empty and a warning is printed.
 
-`mriscans.tsv` is named distinctly from BIDS's canonical `scans.tsv` so it never collides with [`xnatcli physioconvert`](#xnatcli-physioconvert)'s own `physioscans.tsv` when both land under the same `PROJECT/` directory; [`xnatcli bidsmap`](#xnatcli-bidsmap) promotes `mriscans.tsv`/`mriscans.json` to the canonical `scans.tsv`/`scans.json` in its mapped output.
+`mriscans.tsv` is named distinctly from BIDS's canonical `scans.tsv`; [`xnatcli bidsmap`](#xnatcli-bidsmap) promotes `mriscans.tsv`/`mriscans.json` to the canonical `scans.tsv`/`scans.json` in its mapped output.
 
 When a `mriscans.tsv` already exists, rows are merged by `filename` rather than being rebuilt from scratch — this is what lets separate sessions be converted at different times (not all at once) without losing manual review work already recorded for earlier sessions:
 
-- A row whose `filename` is already in `mriscans.tsv` is always **kept exactly as-is**, including any text in its reviewer columns (`rename`, `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, `qc_notes`). This applies even if that file's generator-owned fields have since drifted from what's on disk — such drift is only reported (see below), never applied.
+- A row whose `filename` is already in `mriscans.tsv` is always **kept exactly as-is**, including any text in its reviewer columns (`rename`, `physio`, `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, `qc_notes`). This applies even if that file's generator-owned fields have since drifted from what's on disk — such drift is only reported (see below), never applied.
 - A row whose `filename` is **not** yet in `mriscans.tsv` — i.e. newly converted since the last time `mriscans.tsv` was written — is appended with its reviewer columns blank.
 - A row already in `mriscans.tsv` whose file is no longer found on disk is preserved rather than dropped.
 
-Whenever a `mriscans.tsv` already exists, the freshly generated rows are compared against it and every difference in a **non-user (generator-owned)** field — `acq_time`, `series_number`, `dimensions`, `size_bytes`, `bids_name`, `participant_id`, `session_id`, `datatype`, `task`, `acquisition`, `echo`, `run`, `suffix`, plus files added or removed on disk — is reported as one `WARNING` per deviation to stdout and to a log file at `<output>/log/scans_deviations_<PROJECT>_<YYYYMMDD_HHMMSS>.log`. The log is written only when there is at least one deviation. (When `nibabel` is unavailable, `dimensions` is excluded from the comparison so its empty values are not flagged.) Reviewer-column edits are never reported as deviations.
+Whenever a `mriscans.tsv` already exists, the freshly generated rows are compared against it and every difference in a **non-user (generator-owned)** field — `acq_time`, `series_number`, `dimensions`, `size_bytes`, `participant_id`, `session_id`, `datatype`, `suffix`, `bids_name`, plus files added or removed on disk — is reported as one `WARNING` per deviation to stdout and to a log file at `<output>/log/scans_deviations_<PROJECT>_<YYYYMMDD_HHMMSS>.log`. The log is written only when there is at least one deviation. (When `nibabel` is unavailable, `dimensions` is excluded from the comparison so its empty values are not flagged.) Reviewer-column edits are never reported as deviations.
 
 Rows preserved because their file is no longer found on disk are additionally tallied across every project in scope and, if the total is non-zero, reported once more at the very end of the run: `WARNING: N mriscans.tsv row(s) across all project(s) in scope reference file(s) no longer found on disk (rows preserved; see WARNING(s) above).` This is informational only — it does not affect `mriconvert`'s exit code.
 
@@ -276,22 +277,21 @@ The columns, in order:
 | `series_number` | `SeriesNumber` from the file's JSON sidecar (empty if absent). |
 | `dimensions` | `nibabel` image shape, `x`-joined, always padded to include the 4th dimension even when it is `1` (e.g. `256x256x170x1`). |
 | `size_bytes` | File size on disk, in bytes. |
+| `participant_id` | `sub-<label>` parsed from the filename. |
+| `session_id` | `ses-<label>` parsed from the filename. |
+| `datatype` | Name of the file's parent directory (e.g. `anat`, `func`). |
+| `suffix` | Basename portion after the last underscore (never empty). |
 | `bids_name` | The basename between the `sub-<label>_ses-<label>_` prefix and the `.nii.gz` extension. |
 | `rename` | Empty — for the end-user to record a corrected `bids_name`. |
+| `physio` | Empty — for the end-user to record the basename (with extension) of a raw physio recording under `PhysioParent` acquired alongside this scan; consumed by [`xnatcli physioconvert`](#xnatcli-physioconvert). |
 | `recommend_for_use` | Empty — end-user `TRUE`/`FALSE` review field. |
 | `complete` | Empty — end-user `TRUE`/`FALSE` review field (acquired at full intended length). |
 | `usable` | Empty — end-user `TRUE`/`FALSE` review field. |
 | `qc_rating` | Empty — end-user `PASS`/`FAIL`/`UNCERTAIN` review field. |
 | `rating_reason` | Empty — free-text reason for `qc_rating`. |
 | `qc_notes` | Empty — free-text QC notes. |
-| `participant_id` | `sub-<label>` parsed from the filename. |
-| `session_id` | `ses-<label>` parsed from the filename. |
-| `datatype` | Name of the file's parent directory (e.g. `anat`, `func`). |
-| `task` | The full `task-<label>` entity (prefix included), or empty. |
-| `acquisition` | The full `acq-<label>` entity (prefix included), or empty. |
-| `echo` | The full `echo-<index>` entity (prefix included), or empty. |
-| `run` | The full `run-<index>` entity (prefix included), or empty. |
-| `suffix` | Basename portion after the last underscore (never empty). |
+
+`mriscans.json` additionally carries a top-level `PhysioParent` key (`{"Description": ..., "Value": "<path or empty>"}`) recording the absolute path passed via `-y/--physio`, the flat directory holding every raw physio recording for the project.
 
 ## `xnatcli cubids`
 
@@ -320,18 +320,11 @@ For example, if you ran `xnatcli mriconvert -i DOWNLOAD_DIR -p MYPROJ -o /data/b
 
 ## `xnatcli bidsmap`
 
-Generates a participant/session mapping TSV for a BIDS dataset — the output of `xnatcli mriconvert` (`-m mri`) or `xnatcli physioconvert` (`-m physio`), at `INPUT_DIR/PROJECT/`. The map is later filled in by hand to relate XNAT IDs and real dates to anonymized BIDS IDs and session codenames. When `-o OUTPUT_DIR` is provided, it additionally applies all filled-in renames by copying the BIDS dataset to a new directory tree.
+Generates a participant/session mapping TSV for a BIDS dataset — the output of `xnatcli mriconvert` (with any physio already placed by [`xnatcli physioconvert`](#xnatcli-physioconvert)) — at `INPUT_DIR/PROJECT/`. The map is later filled in by hand to relate XNAT IDs and real dates to anonymized BIDS IDs and session codenames. When `-o OUTPUT_DIR` is provided, it additionally applies all filled-in renames by copying the BIDS dataset to a new directory tree.
 
-This is the "map" half of the xnatcli workflow: every modality first **converts** raw source data to BIDS (`mriconvert`/`physioconvert`), preserving the source data untouched; `bidsmap` then **maps** that raw/unmapped BIDS data to a separate, renamed BIDS output, so the intermediary unmapped BIDS data is preserved too. `-m/--modality` selects which BIDS shape `INPUT_DIR/PROJECT/` holds:
+This is the "map" half of the xnatcli workflow: `mriconvert`/`physioconvert` first **convert** raw source data to BIDS, preserving the source data untouched; `bidsmap` then **maps** that raw/unmapped BIDS data to a separate, renamed BIDS output, so the intermediary unmapped BIDS data is preserved too. `bidsmap` operates on `.nii.gz` main files with `.json`/`.bval`/`.bvec` sidecars, reading its `rename` column and QC-exclusion columns (`recommend_for_use`, `complete`, `usable`, `qc_rating`) from `mriscans.tsv` (one row per `.nii.gz` file, so `rename` unambiguously targets one file). A physio `_physio.tsv.gz`/`.json` pair co-located under the same `sub-*/ses-*/<datatype>/` directory rides along the copy for free (participant/session label substitution only — [`physioconvert`](#xnatcli-physioconvert) already writes it under its final name, so no separate rename step is needed for it).
 
-| Modality | Main files | Sidecars | Source manifest read | Root manifests written in mapped output |
-| --- | --- | --- | --- | --- |
-| `mri` | `.nii.gz` | `.json`, `.bval`, `.bvec` | `mriscans.tsv`/`mriscans.json` | `scans.tsv`, `scans.json`, `participants.tsv` (promoted from `mriscans.*`) |
-| `physio` | `.tsv.gz` | `.json` | `physioscans.tsv`/`physioscans.json` | `physioscans.tsv`, `physioscans.json` (same name, not promoted) |
-
-Both modalities read their `rename` column and QC-exclusion columns (`recommend_for_use`, `complete`, `usable`, `qc_rating`) from their own source manifest the same way. `mri`'s manifest has one row per `.nii.gz` file, so `rename` unambiguously targets one file. `physio`'s manifest has one row per *source recording* (`physioconvert`'s `physioscans.tsv`, keyed by `source_path`), and a single recording can produce multiple output files when `phys2bids` splits it by sampling frequency (its `output_files` column is then comma-separated) — `rename` only applies when a row has exactly one output file; on a multi-output row it is ignored with a warning, since it cannot unambiguously target one of several files.
-
-`mri`'s `mriscans.tsv` is named distinctly from BIDS's canonical `scans.tsv` (see [`xnatcli mriconvert`](#xnatcli-mriconvert)) precisely so it never collides with `physio`'s `physioscans.tsv` when both land under the same `PROJECT/` directory; `bidsmap -m mri -o` promotes it to the canonical `scans.tsv`/`scans.json` in the mapped output. `physio`'s `physioscans.tsv` is **not** promoted — it keeps its own name through both the raw and mapped trees, and its rows are never merged into `mri`'s `scans.tsv`.
+`mriscans.tsv` is named distinctly from BIDS's canonical `scans.tsv` (see [`xnatcli mriconvert`](#xnatcli-mriconvert)); `bidsmap -o` promotes it to the canonical `scans.tsv`/`scans.json` in the mapped output.
 
 ### Map TSV generation (always runs)
 
@@ -343,8 +336,7 @@ Both modalities read their `rename` column and QC-exclusion columns (`recommend_
 4. If `PROJECT-<PROJECT>_bidsmap.tsv` already exists, a fresh blank map is generated and compared to it (with `pandas`): any `(participant_id, session_id)` pairs not already present are appended, and all existing rows — including any `*_rename` values already filled in — are preserved. The merged table is re-sorted and rewritten.
 
 ```bash
-xnatcli bidsmap -i MRICONVERT_OUTPUT_DIR -p PROJECT -m mri
-xnatcli bidsmap -i PHYSIOCONVERT_OUTPUT_DIR -p PROJECT -m physio
+xnatcli bidsmap -i MRICONVERT_OUTPUT_DIR -p PROJECT
 ```
 
 ### Copy-with-rename (`-o OUTPUT_DIR`)
@@ -352,98 +344,79 @@ xnatcli bidsmap -i PHYSIOCONVERT_OUTPUT_DIR -p PROJECT -m physio
 When `-o` is provided, after updating the map TSV the command reads back the renames and writes a fully renamed copy of the BIDS dataset to `OUTPUT_DIR/PROJECT/`:
 
 - **`PROJECT-<PROJECT>_bidsmap.tsv`** — `participant_rename` and `session_rename` columns rename `sub-*` and `ses-*` directory names and the matching labels embedded in all filenames. Blank values mean "keep the original label."
-- **The modality's own source manifest** (`mriscans.tsv` or `physioscans.tsv`, per the table above) — its `rename` column supplies a corrected `bids_name` (the part after `sub-X[_ses-Y]_`) for the file(s) that row describes. Sidecar files (`.json`, and for `mri` also `.bval`/`.bvec`) sharing the same stem are renamed to match. Blank values mean "keep the original bids_name."
+- **`mriscans.tsv`** — its `rename` column supplies a corrected `bids_name` (the part after `sub-X[_ses-Y]_`) for the file(s) that row describes. Sidecar files (`.json`, `.bval`, `.bvec`) sharing the same stem are renamed to match. Blank values mean "keep the original bids_name."
 
 The copy also:
 
-- **QC filtering**: Rows whose `recommend_for_use`, `complete`, or `usable` is exactly `"FALSE"`, or whose `qc_rating` is exactly `"FAIL"` or `"UNCERTAIN"`, have their file(s) excluded from the copy (along with sidecars) and their row omitted from the output manifest. Values in any of these columns that are non-empty but do not match a valid Level from the manifest's `.json` data dictionary (e.g. `"false"` instead of `"FALSE"`) generate an additional warning, since they are silently ignored by the filter.
-- **`-m mri`**: updates `participants.tsv` in the output with the renamed participant IDs, and writes `scans.tsv` (`filename`, `bids_name`, `participant_id`, `session_id` columns) to reflect all renames, omits rows for QC-excluded files, and drops the columns `rename`, `task`, `acquisition`, `echo`, `run`, and `suffix` (the rename has been applied; the rest are redundant with the filename). All other reviewer columns are preserved. `mriscans.tsv`/`mriscans.json` themselves are **not** copied verbatim — they are promoted to `scans.tsv`/`scans.json` instead.
-- **`-m physio`**: updates `physioscans.tsv`'s `participant_id`/`session_id` columns and its `output_files` column (comma-separated paths) to reflect the renamed tree, and drops rows that were QC-excluded; `source_path` (which points at the original raw recording, outside the output tree) is left untouched. `physioscans.tsv` keeps its own name in the mapped output (never renamed to `scans.tsv`).
-- Skips `tmp_dcm2bids`, `tmp_phys2bids`, and `log` scratch directories.
-- **Incremental by default**: if `OUTPUT_DIR/PROJECT/` already exists, files under `sub-*/` whose destination path already exists are treated as already mapped and left untouched — only files not yet present at the destination are copied. Root-level manifests (`scans.tsv`/`participants.tsv` for `mri`, `physioscans.tsv` for `physio`, plus `dataset_description.json`, ...) are always re-copied/re-written and re-patched, since they reflect the fully merged source state. This lets `bidsmap -o` be re-run safely as new data lands in `INPUT_DIR/PROJECT/` (e.g. from further `mriconvert`/`physioconvert` runs).
+- **QC filtering**: Rows whose `recommend_for_use`, `complete`, or `usable` is exactly `"FALSE"`, or whose `qc_rating` is exactly `"FAIL"` or `"UNCERTAIN"`, have their file(s) excluded from the copy (along with sidecars) and their row omitted from the output manifest. Values in any of these columns that are non-empty but do not match a valid Level from `mriscans.json` (e.g. `"false"` instead of `"FALSE"`) generate an additional warning, since they are silently ignored by the filter.
+- Updates `participants.tsv` in the output with the renamed participant IDs, and writes `scans.tsv` (`filename`, `bids_name`, `participant_id`, `session_id` columns, among others) to reflect all renames, omits rows for QC-excluded files, and drops the columns `rename` and `physio` (both have already been applied by the time `bidsmap -o` runs — `rename` to `bids_name`, `physio` by `xnatcli physioconvert`, which must run before `bidsmap -o`). All other reviewer columns are preserved. `mriscans.tsv`/`mriscans.json` and `physioconvert_qc.tsv`/`.json` themselves are **not** copied — `mriscans.tsv`/`.json` are promoted to `scans.tsv`/`.json` instead, and `physioconvert_qc.tsv`/`.json` stay raw-tree-only bookkeeping with no promoted counterpart.
+- Skips `tmp_dcm2bids` and `log` scratch directories.
+- **Incremental by default**: if `OUTPUT_DIR/PROJECT/` already exists, files under `sub-*/` whose destination path already exists are treated as already mapped and left untouched — only files not yet present at the destination are copied. Root-level manifests (`scans.tsv`, `participants.tsv`, `dataset_description.json`, ...) are always re-copied/re-written and re-patched, since they reflect the fully merged source state. This lets `bidsmap -o` be re-run safely as new data lands in `INPUT_DIR/PROJECT/` (e.g. from further `mriconvert`/`physioconvert` runs).
 - **Warns loudly** when new files are being mapped into a `sub-*/[ses-*/]` directory that already existed at the destination before this run, since that session was already mapped and is only gaining files.
 - Warns loudly for any two source files that would map to the same destination path (neither is copied); all warnings are re-displayed together at the end.
 
 ```bash
-xnatcli bidsmap -i MRICONVERT_OUTPUT_DIR -p PROJECT -m mri -o RENAMED_OUTPUT_DIR
-xnatcli bidsmap -i PHYSIOCONVERT_OUTPUT_DIR -p PROJECT -m physio -o RENAMED_OUTPUT_DIR
+xnatcli bidsmap -i MRICONVERT_OUTPUT_DIR -p PROJECT -o RENAMED_OUTPUT_DIR
 ```
 
 For example, if the BIDS dataset lives at `/data/bids/MYPROJ/`, then:
 
-- `xnatcli bidsmap -i /data/bids -p MYPROJ -m mri` writes `/data/bids/PROJECT-MYPROJ_bidsmap.tsv`.
-- After filling in the rename columns, `xnatcli bidsmap -i /data/bids -p MYPROJ -m mri -o /data/renamed` copies the dataset to `/data/renamed/MYPROJ/` with all renames applied.
+- `xnatcli bidsmap -i /data/bids -p MYPROJ` writes `/data/bids/PROJECT-MYPROJ_bidsmap.tsv`.
+- After filling in the rename columns, `xnatcli bidsmap -i /data/bids -p MYPROJ -o /data/renamed` copies the dataset to `/data/renamed/MYPROJ/` with all renames applied.
 
 | Argument | Description |
 | --- | --- |
 | `-i`, `--input` | **Required.** Root directory holding the BIDS dataset at `INPUT_DIR/PROJECT/`. The map TSV is written here as `PROJECT-<PROJECT>_bidsmap.tsv`. |
 | `-p`, `--project` | **Required.** Project directory name under `INPUT_DIR` identifying the BIDS dataset to scan. |
-| `-m`, `--modality` | **Required.** `mri` or `physio` — selects the main/sidecar file extensions and which source manifest's rename/QC columns apply (see table above). |
-| `-o`, `--output` | *Optional.* When provided, copy the BIDS dataset to `OUTPUT_DIR/PROJECT/` with all renames from the map TSV and the modality's own manifest `rename` column applied. If `OUTPUT_DIR/PROJECT/` already exists, only files not already mapped there are copied (see above). |
+| `-o`, `--output` | *Optional.* When provided, copy the BIDS dataset to `OUTPUT_DIR/PROJECT/` with all renames from the map TSV and `mriscans.tsv`'s own `rename` column applied. If `OUTPUT_DIR/PROJECT/` already exists, only files not already mapped there are copied (see above). |
 
 ## `xnatcli physioconvert`
 
-Walks a directory tree for physiological recordings and converts each one to [BIDS physiological recordings](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/physiological-recordings.html) (`_physio.tsv.gz` + `_physio.json`) inside a BIDS project directory, using [`phys2bids`](https://phys2bids.readthedocs.io/) (imported as a Python library) to read the files and write the BIDS output.
+Converts physio recordings **associated with an `xnatcli mriconvert` BIDS dataset** to [BIDS physiological recordings](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/physiological-recordings.html) (`_physio.tsv.gz` + `_physio.json`), using [`phys2bids`](https://phys2bids.readthedocs.io/) (imported as a Python library) to read the files and write the BIDS output. It must run **after** `xnatcli mriconvert` and **before** `xnatcli bidsmap -o` (the association it consumes lives in `mriconvert`'s raw `mriscans.tsv`, and the `physio` column is dropped once `bidsmap` promotes it to `scans.tsv`).
 
-1. Validates `--input` and creates `OUTPUT_DIR/PROJECT/` if missing; exits with a message if `phys2bids` is unavailable.
-2. Recursively finds every file whose extension `phys2bids` supports (`.acq`, `.txt`, `.mat`, `.gep`, `.smr`; case-insensitive) under `--input`, skipping anything already inside `OUTPUT_DIR/PROJECT/`.
-3. **Validates that each match is really physiological data** by loading it with the matching `phys2bids` loader — not just trusting the extension. Files that fail to load (e.g. a stray `.txt` that is not a recording) are reported as `NOT_PHYSIO` and skipped.
-4. Writes/updates a `physioscans.tsv` at the `OUTPUT_DIR/PROJECT/` root, one row per validated physio file. The BIDS entity columns (`participant_id`, `session_id`, `datatype`, `task`, `acquisition`, `run`) are best-guesses parsed from the input file's basename, split on underscores:
-   - **`participant_id`** — the first token (filenames are expected to start with the participant label), written as `sub-<token>` (sanitized to alphanumerics).
-   - **`session_id`** — the acquisition date (found among the tokens after the participant — it need not sit immediately after it), emitted as `ses-YYYYMMDD`. Four formats are recognized, in order: Format 1 `DDMMMYY` (e.g. `23May18` → `20180523`, with `20` assumed as the century); Format 2 `YYYYMMDD` (used as-is); Format 3 `MMDDYYYY` and Format 4 `DDMMYYYY` (year last), disambiguated only when exactly one of the two leading pairs exceeds 12. The less common `YYYY-MM-DDTHH_MM_SS` form is checked last. **The parsed date is verified against the file's last-modified date** (see `DATES_DISAGREE` below); when there is no date token, or the `MMDD`/`DDMM` order is ambiguous, the last-modified date is used.
-   - **`run`** — a trailing 4-digit run number becomes a zero-padded 2-digit `run-` entity (e.g. `0000` → `run-00`, `0012` → `run-12`).
-   - **Missing underscores** are handled for the date and run: a token that glues a date to a trailing 4-digit run is split first, so e.g. `RPD123_050620260000` parses as `sub-RPD123` + date `05062026` + `run-00` (likewise `23May180000` → `23May18` + `run-00`). This keeps the date and run out of `acquisition`. (The participant ID is otherwise expected to be the first underscore-delimited token.)
-   - **Fully concatenated names** (no underscores at all) are split when they contain an embedded `DDMMMYY` date — its 3-letter month is an unambiguous anchor: text before the date is the ID and text after is the run. For example `RPD12309Oct190003` → `sub-RPD123` + date `09Oct19` (`20191009`) + `run-03`. Fully-numeric concatenations are **not** split this way (there is no reliable ID/date boundary when the ID also contains digits).
-   - **`acquisition`** — any remaining tokens (those that are neither the participant, the date, nor the run) are concatenated, sanitized, and written as `acq-<label>`.
-   - **`datatype`** is not encoded in filenames, so it defaults to `func`; change it in the map for non-functional recordings.
+Each physio recording is tied to one MRI scan by hand: fill in `mriscans.tsv`'s `physio` column with the raw recording's basename (with extension), found by browsing the flat directory recorded as `PhysioParent` in `mriscans.json` (set via `xnatcli mriconvert -y/--physio`). `physioconvert` then converts and places that recording **directly alongside its paired scan** — no filename parsing or guessed entities.
 
-   Existing user edits in `physioscans.tsv` take precedence over these guesses. The regenerated columns are `status`, the per-file metrics, and `bids_name` (below); the `rename`/QC review columns and the entity columns above are otherwise preserved verbatim across runs. `physioscans.tsv` is sorted by `source_path`.
-5. Runs the `phys2bids` workflow into a temporary directory for each validated physio file **that has not already been converted**, then relocates its `.tsv.gz`/`.json` output(s). The JSON sidecar (with `SamplingFrequency`, `StartTime`, `Columns`) is produced by `phys2bids` and carried over as-is. A file is treated as **already converted** when a prior `physioscans.tsv` shows `status=CONVERTED`, `DATES_DISAGREE`, or `UNKNOWN_NAME` for it **and** all of its recorded `output_files` still exist on disk. Such a file is **never re-converted**; instead its existing outputs are **relocated/renamed to match its (possibly edited) row** — exactly as `-m/--maps` does (see below) — so editing its entities and re-running always moves/renames the outputs without re-running `phys2bids`, and its preserved metrics are carried over with only the output paths (and `bids_name`) refreshed. A file whose outputs are missing, or whose prior status was anything else (`CONVERT_ERROR`, `NOT_PHYSIO`, …), and every new file, is converted as usual. (Under `-m/--maps`, *every* file takes this relocate path and nothing is converted.)
-   - **Resolved files** (`participant_id` filled) are moved into `<output>/sub-<P>/[ses-<S>/]<datatype>/`, renamed to the BIDS basename built from the row's entities, with `status=CONVERTED`. `task`, `session_id`, `acquisition`, and `run` are optional — when blank, that entity is simply omitted from the name.
-   - **Unresolved files** (`participant_id` blank — i.e. the filename did not start with a participant label) are instead moved into `<output>/tmp_phys2bids/` keeping the input file's basename (the default name `phys2bids` assigns), with `status=UNKNOWN_NAME`. The layout there is flat; if two inputs share a basename, a `_1`, `_2`, … suffix is appended so nothing is overwritten. The original path (`source_path`) and the converted path(s) (`output_files`) are both recorded in `physioscans.tsv` (and per-output as `DESTINATION_PATH` in the log).
-   - **Nothing is ever overwritten.** If a resolved file's BIDS name already exists (e.g. two recordings map to the same entities), a zero-padded `run-` entity is added (or an existing one incremented) until the name is free. A file's own outputs from a previous run are cleared first, so re-running is idempotent.
-6. `phys2bids` automatically splits a recording whose channels have different sampling frequencies into one output file per frequency; for resolved files each such file is given a `recording-<label>` entity (the `<freq>Hz` suffix `phys2bids` assigns).
-7. Regenerates the per-file metrics every run: `n_channels` (channel count, including the time channel), `sampling_frequencies` (unique channel frequencies in Hz, ascending), `output_files` (converted `_physio.tsv.gz` path(s), relative to `OUTPUT_DIR/PROJECT/`), `sample_count` (samples per frequency), `duration_seconds` (acquisition length in seconds at 0.001 s precision, `sample_count / sampling_frequency`), and `bids_name` (the portion of each output file's basename between the `sub-<label>[_ses-<label>]_` prefix and `.tsv.gz`). `sampling_frequencies`, `sample_count`, `duration_seconds`, and `bids_name` are comma-separated and aligned position-by-position, so a recording split across frequencies reports one entry per frequency (and per output) in each. Non-physio/missing files keep blank metrics.
-8. Also carries forward (never regenerates) a `rename`/QC review block on every row, mirroring [`xnatcli mriconvert`](#xnatcli-mriconvert)'s `mriscans.tsv`: `rename` (a free-text corrected `bids_name`, consumed by [`xnatcli bidsmap -m physio -o`](#xnatcli-bidsmap) — only takes effect when the row has exactly one output file), `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, and `qc_notes`. All seven are blank until an end-user fills them in, and are preserved verbatim across every future run.
-9. Copies the static data dictionary [`src/assets/physioscans.json`](src/assets/physioscans.json) into the `OUTPUT_DIR/PROJECT/` root as `physioscans.json`, describing every column.
-
-Once converted, run [`xnatcli bidsmap -i OUTPUT_DIR -p PROJECT -m physio`](#xnatcli-bidsmap) to generate a participant/session rename map for this physio BIDS output, and `-o RENAMED_OUTPUT_DIR` to apply it (renaming `physioscans.tsv` accordingly, including any `rename`/QC edits) once filled in.
-
-**Fill in the blank entity columns in `physioscans.tsv` and re-run** to place the `UNKNOWN_NAME` files under their proper BIDS path — user edits are preserved across runs, and once a file is placed correctly its earlier `tmp_phys2bids/` copy is deleted. **Editing any already-converted file's entities and re-running renames/moves its outputs to match, without re-running the (slow) `phys2bids` conversion** — a plain run relocates already-converted files (reusing their stored metrics) and only converts files that have no outputs yet. The dedicated `-m/--maps` mode does the same relocation for *every* file but never converts anything, and additionally re-reads each file to refresh its metrics (see below).
+1. Validates that `OUTPUT_DIR/PROJECT/mriscans.tsv` exists (i.e. `xnatcli mriconvert` has already run); exits with a message if `phys2bids` is unavailable.
+2. Reads `mriscans.tsv` (read-only — `physioconvert` never writes it back) and scopes to every row with a non-blank `physio` column.
+3. **Collision check**: if the same `physio` basename is referenced by more than one row, **none** of those rows are converted — each is marked `COLLISION` and a `WARNING` lists every row referencing it. Clear all but one row's `physio` column and re-run to resolve.
+4. Reads `PhysioParent` from `mriscans.json`. For each remaining row, resolves the raw file as `PhysioParent/<physio>`; a missing `PhysioParent` or basename not found under it is reported as `SOURCE_MISSING` for that row (and does not block other rows).
+5. **Validates that each match is really physiological data** by loading it with the matching `phys2bids` loader — not just trusting the extension. A file that fails to load (e.g. a stray `.txt` that is not a recording) is reported as `NOT_PHYSIO`.
+6. Runs the `phys2bids` workflow into a temporary directory for each row **that has not already been converted from the same `physio` value**, then places its `.tsv.gz`/`.json` output(s) directly at `OUTPUT_DIR/PROJECT/<participant_id>/[<session_id>/]<datatype>/`, next to the associated `.nii.gz`, named from the row's `rename` (if set) or `bids_name` with its trailing suffix token replaced by `physio` — e.g. `bids_name` `task-rest_bold` → `task-rest_physio`, so the pair becomes `..._task-rest_physio.tsv.gz`/`.json`. A row is treated as **already converted** when a prior `physioconvert_qc.tsv` shows `status=CONVERTED` for its `filename`, the recorded `physio` value matches the current one, and all of its recorded `output_files` still exist on disk — such a row is **never re-converted**; if its entities changed (e.g. `rename`, `participant_id`, `session_id`, `datatype`) its existing output is instead **relocated/renamed to match**, without re-running `phys2bids`. Editing a row's `physio` value to a *different* raw file converts the new one fresh; the old output is left in place (not auto-deleted — review and remove it by hand if it's no longer wanted). **Nothing is ever overwritten** — if the computed destination is already occupied by a file from a different association, the row is marked `CONVERT_ERROR` with a detail message instead.
+7. `phys2bids` automatically splits a recording whose channels have different sampling frequencies into one output file per frequency; each such file is given a `recording-<label>` entity (the `<freq>Hz` suffix `phys2bids` assigns) inserted just before `physio`.
+8. Regenerates the per-row metrics every run a conversion actually happens: `n_channels` (channel count, including the time channel), `sampling_frequencies` (unique channel frequencies in Hz, ascending), `output_files` (converted `_physio.tsv.gz` path(s), relative to `OUTPUT_DIR/PROJECT/`), `sample_count` (samples per frequency), `duration_seconds` (acquisition length in seconds at 0.001 s precision, `sample_count / sampling_frequency`), and `bids_name` (the portion of each output file's basename after its `participant_id[_session_id]_` prefix). `sampling_frequencies`, `sample_count`, `duration_seconds`, and `bids_name` are comma-separated and aligned position-by-position, so a recording split across frequencies reports one entry per frequency (and per output) in each. A relocated (not reconverted) row's metrics are carried over verbatim; a blocked/failed row keeps blank metrics.
+9. Writes/updates `physioconvert_qc.tsv` at the `OUTPUT_DIR/PROJECT/` root, one row per in-scope association, keyed by `filename` (the associated mri scan's row in `mriscans.tsv`). Also carries forward (never regenerates) a QC review block on every row: `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, `qc_notes` — blank until an end-user fills them in, and preserved verbatim across every future run. A row whose mri association no longer exists (the `mriscans.tsv` row was deleted, or its `physio` column was blanked) is preserved with `status=ROW_GONE` rather than dropped, so QC edits are never lost. `physioconvert_qc.tsv` is sorted by `filename`.
+10. Copies the static data dictionary [`src/assets/physioconvert_qc.json`](src/assets/physioconvert_qc.json) into the `OUTPUT_DIR/PROJECT/` root as `physioconvert_qc.json`, describing every column.
 
 ```bash
 # Serial
-xnatcli physioconvert -i PHYSIO_DIR -p MYPROJ -o BIDS_DIR
+xnatcli physioconvert -o BIDS_DIR -p MYPROJ
 
-# 4 files converted in parallel
-xnatcli physioconvert -i PHYSIO_DIR -p MYPROJ -o BIDS_DIR -n 4
+# 4 conversions in parallel
+xnatcli physioconvert -o BIDS_DIR -p MYPROJ -n 4
 ```
 
-Physio outputs land under `BIDS_DIR/MYPROJ/`, alongside the project's `mriconvert` output (if any).
+With `-n/--nphysio` > 1, the `phys2bids` conversions run in parallel across separate **processes** (real parallelism, since `phys2bids` is an in-process Python library rather than an external command). The conversions run in workers, but all placement, `physioconvert_qc.tsv`, and the log are written **serially in the main process**, drained in **sorted-filename order** (out-of-order completions are buffered until their turn) — so results are fully deterministic regardless of `-n`.
 
-With `-n/--nphysio` > 1, the `phys2bids` conversions run in parallel across separate **processes** (real parallelism, since `phys2bids` is an in-process Python library rather than an external command). The conversions run in workers, but all BIDS naming, collision/`run-` numbering, `physioscans.tsv`, and the log are written **serially in the main process**, and placement is drained in **sorted source-path order** (out-of-order completions are buffered until their turn). So results are fully deterministic and identical to a serial run, including which of two name-colliding files keeps the unnumbered name and which gets `run-NN` (the sorted-earlier source path wins) — regardless of `-n`.
-
-### Per-file STATUS (and exit code)
+### Per-association STATUS (and exit code)
 
 | STATUS | Meaning |
 | --- | --- |
-| `CONVERTED` | `phys2bids` read the file and its `_physio.tsv.gz`/`.json` file(s) were written to the proper BIDS path. |
-| `UNKNOWN_NAME` | The file is valid physio but `participant_id` is blank (the filename did not start with a participant label), so it was converted into `<output>/tmp_phys2bids/` under its input basename. Fill in `participant_id` in `physioscans.tsv` and re-run to place it properly (the `tmp_phys2bids/` copy is removed then). |
-| `DATES_DISAGREE` | The file converted to its proper BIDS path, but the date parsed from its filename disagrees with its last-modified date. The **last-modified date** was used for `session_id`; review and set `session_id` in `physioscans.tsv` if the filename date is the correct one. |
-| `NOT_PHYSIO` | The file matched a supported extension but could not be loaded as physiological data (so it is not added to the map, unless a prior row exists to preserve). |
+| `CONVERTED` | `phys2bids` read the raw file and its `_physio.tsv.gz`/`.json` were written next to the paired `.nii.gz`. |
+| `NOT_PHYSIO` | The referenced file matched a supported extension but could not be loaded as physiological data. |
 | `READER_MISSING` | The optional reader package `phys2bids` needs for this format is not installed (e.g. `bioread` for `.acq`, `scipy` for `.mat`, `sonpy` for `.smr`). This is an environment problem, not a data problem — install the package and re-run. |
-| `CONVERT_ERROR` | `phys2bids` raised while converting, or produced no `.tsv.gz` output. |
-| `MISSING` | A file present in a prior `physioscans.tsv` is no longer found under `--input`; its row (and any edits) is preserved. |
+| `CONVERT_ERROR` | `phys2bids` raised while converting, produced no `.tsv.gz` output, or its destination was already occupied by a different file. |
+| `SOURCE_MISSING` | `PhysioParent` was unset/not a directory, the named basename was not found under it, or the `mriscans.tsv` row is missing `participant_id`/`datatype`. |
+| `COLLISION` | This `physio` basename is referenced by more than one `mriscans.tsv` row; none were converted until resolved. |
+| `ROW_GONE` | The `mriscans.tsv` row this physio conversion was associated with no longer has a matching `physio` association; row and any prior QC edits are preserved. |
 
-Exit code is `1` if any file is `CONVERT_ERROR` or `READER_MISSING`, and `0` otherwise. (`UNKNOWN_NAME` and `DATES_DISAGREE` are not errors — those files are converted, just awaiting proper naming or a date review.)
+Exit code is `1` if any association is `CONVERT_ERROR` or `READER_MISSING`, and `0` otherwise.
 
 | Argument | Description |
 | --- | --- |
-| `-i`, `--input` | **Required.** Root directory walked recursively for `phys2bids`-supported physio files (`.acq`/`.txt`/`.mat`/`.gep`/`.smr`). |
-| `-p`, `--project` | **Required.** Name of the BIDS project directory to nest outputs under, i.e. `OUTPUT_DIR/PROJECT/`. |
-| `-o`, `--output` | **Required.** Directory to write BIDS physio files into. Each project's physio outputs land under `OUTPUT_DIR/PROJECT/`, where a `physioscans.tsv` (source path, best-guess BIDS entities, per-file metrics, and `bids_name`/`rename`/QC review columns) and its `physioscans.json` data dictionary are written/updated at its root. |
-| `-n`, `--nphysio` | *Optional.* Number of physio files to convert in parallel, one `phys2bids` conversion per process (default `1`). |
-| `-l`, `--log` | *Optional.* Write a per-file log CSV to `OUTPUT_DIR/PROJECT/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv` (header `DATESTAMP,SOURCE_PATH,STATUS,DESTINATION_PATH`). One row per processed file, except a converted file that produced several outputs emits one row per output (each with its own `DESTINATION_PATH`); files with no output get a single blank-`DESTINATION_PATH` row. Off by default. |
-| `-m`, `--maps` | *Optional.* Skip the `phys2bids` conversion and instead **apply your `physioscans.tsv` edits** to the already-converted files: each file's existing `_physio.tsv.gz`/`.json` output(s) (the paths recorded in `output_files`) are **moved/renamed** to the BIDS path implied by its (possibly edited) entities, preserving each `recording-<freq>Hz` label and handling `tmp_phys2bids/` ↔ proper-path transitions — but without re-running `phys2bids`. **Nothing is overwritten:** a file already correctly placed is left as-is, and if the target path is occupied by a *different* file the move is **skipped with a `WARNING`** (resolve the conflict and re-run). `physioscans.tsv` and its `.json` data dictionary are regenerated (`rename`/QC columns preserved); emptied source directories (including `tmp_phys2bids/`) are pruned. Each file is still re-read to recompute its metrics, so `phys2bids` is needed to read the files. Files with no prior output (e.g. an earlier `CONVERT_ERROR`) cannot be placed in this mode — re-run without `-m/--maps` to convert them. |
+| `-o`, `--output` | **Required.** Same BIDS root `xnatcli mriconvert` wrote to (`OUTPUT_DIR/PROJECT/` must hold `mriscans.tsv`/`mriscans.json`). Physio outputs are written directly into `OUTPUT_DIR/PROJECT/<participant_id>/[<session_id>/]<datatype>/`, alongside the associated `.nii.gz`. |
+| `-p`, `--project` | **Required.** Project directory name under `OUTPUT_DIR` identifying the BIDS dataset produced by `xnatcli mriconvert`. |
+| `-n`, `--nphysio` | *Optional.* Number of physio conversions to run in parallel, one `phys2bids` conversion per process (default `1`). |
+| `-l`, `--log` | *Optional.* Write a per-association log CSV to `OUTPUT_DIR/PROJECT/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv` (header `DATESTAMP,STATUS,MRI_FILENAME,PHYSIO_SOURCE,DESTINATION_PATH`). One row per processed association, except a conversion that produced several outputs emits one row per output; associations with no output get a single blank-`DESTINATION_PATH` row. Off by default. |
+| `-m`, `--maps` | *Optional.* Skip the `phys2bids` conversion; only **relocate** already-converted outputs to match edited `rename`/`physio`/entity columns (same relocate logic as a plain run's fast path), and refresh `physioconvert_qc.tsv`. An association with no existing output to relocate is left untouched with a note — re-run without `-m/--maps` to convert it. Metrics are not re-read in this mode (they depend only on file content, not naming), so `phys2bids` need not successfully load anything for a pure relocate pass. |
 
 > **Note:** `phys2bids` 2.10.0 caps `numpy` at `<1.24`, which conflicts with `nibabel`'s `numpy>=1.25` requirement. Because `phys2bids` does not actually use any `numpy` APIs removed in 1.24+, `pyproject.toml` carries a `[tool.uv] override-dependencies = ["numpy>=1.25,<2"]` so the whole stack shares one `numpy` (held on the 1.x series, which predates `numpy` 2.0).

@@ -1,14 +1,15 @@
 """Backs the ``xnatcli bidsmap`` command: participant/session mapping and a
-rename-copy engine for any BIDS-shaped project directory.
+rename-copy engine for a BIDS-shaped project directory produced by
+``xnatcli mriconvert``.
 
-The xnatcli workflow for every modality is "convert" (raw source data ->
-BIDS, e.g. ``mriconvert``/``physioconvert``) then "map" (raw BIDS ->
-renamed/mapped BIDS output, this module) — so the source data and the
-unmapped BIDS data are both preserved, and only the final copy carries
-participant/session (and, for imaging, file-level) renames. The generic
+The xnatcli workflow is "convert" (raw source data -> BIDS via
+``mriconvert``, with associated physio placed by ``physioconvert``) then
+"map" (raw BIDS -> renamed/mapped BIDS output, this module) — so the source
+data and the unmapped BIDS data are both preserved, and only the final copy
+carries participant/session and file-level renames. The generic
 scan/blank/merge/copy-plan helpers below work for any ``sub-*/[ses-*/]``
-tree; the ``mri``/``physio`` modality-specific pieces (QC exclusion, rename
-columns, root manifest patching) live at the bottom alongside ``bidsmap_cmd``.
+tree; the mri-specific pieces (QC exclusion, rename columns, root manifest
+patching) live at the bottom alongside ``bidsmap_cmd``.
 """
 
 import argparse
@@ -25,15 +26,17 @@ PARTICIPANT_COLS = ["participant_id", "participant_rename"]
 SESSION_COLS = ["session_id", "session_rename"]
 
 # Default directories skipped when walking a source tree during copy-with-rename.
-# tmp_dcm2bids/tmp_phys2bids hold scratch/unresolved-name data with no sub-*/ses-*
-# home to rename; log holds diagnostic run logs, not BIDS data.
-DEFAULT_SKIP_DIRS = frozenset({"tmp_dcm2bids", "tmp_phys2bids", "log"})
+# tmp_dcm2bids holds dcm2bids scratch data with no sub-*/ses-* home to rename;
+# log holds diagnostic run logs, not BIDS data.
+DEFAULT_SKIP_DIRS = frozenset({"tmp_dcm2bids", "log"})
 
-# Main file extension and sidecars per modality.
-_MODALITY_EXTS = {
-    "mri": (".nii.gz", (".json", ".bval", ".bvec")),
-    "physio": (".tsv.gz", (".json",)),
-}
+# Main file extension and sidecars for the mri-shaped BIDS tree bidsmap maps.
+# A physio _physio.tsv.gz/.json pair co-located under sub-*/ses-*/<datatype>/
+# doesn't match main_ext, so it only gets participant/session label
+# substitution below (it was already written under its final name by
+# physioconvert, so no bids_name override is needed).
+_MAIN_EXT = ".nii.gz"
+_SIDECAR_EXTS = (".json", ".bval", ".bvec")
 
 
 def scan_pairs(bids_dir: Path) -> tuple[list[dict[str, str]], bool, list[str]]:
@@ -420,10 +423,10 @@ def rename_lookup_from_plan(
     its renamed destination path, from an already-built copy plan.
 
     Lets a root-level manifest's path-valued columns (e.g. ``scans.tsv``'s
-    ``filename`` or ``physioscans.tsv``'s ``output_files``) be patched by
-    lookup instead of re-deriving the rename independently. A path with no
-    entry (its file was excluded from the copy, e.g. by a QC filter or a
-    collision) is simply absent — callers leave such values unchanged.
+    ``filename``) be patched by lookup instead of re-deriving the rename
+    independently. A path with no entry (its file was excluded from the copy,
+    e.g. by a QC filter or a collision) is simply absent — callers leave such
+    values unchanged.
     """
     return {
         src.relative_to(source_root).as_posix(): dest_rel for src, dest_rel in plan
@@ -466,26 +469,9 @@ def patch_path_column(
             row[column] = rename_lookup.get(old, old)
 
 
-def patch_multi_path_column(
-    rows: list[dict[str, str]], column: str, rename_lookup: dict[str, str]
-) -> None:
-    """Rewrite a comma-separated relative-path column of ``rows`` in place via
-    ``rename_lookup``. A path with no entry is left unchanged."""
-    for row in rows:
-        old = row.get(column, "")
-        if not old:
-            continue
-        row[column] = ",".join(
-            rename_lookup.get(p.strip(), p.strip()) for p in old.split(",") if p.strip()
-        )
-
-
 # ---------------------------------------------------------------------------
-# Rename column, QC exclusion, and scans.tsv-style manifest patching, shared
-# by both the mri (scans.tsv) and physio (physioscans.tsv) modalities. Each
-# takes a ``path_column``/``multi_path`` pair so the same logic reads mri's
-# single-valued ``filename`` column and physio's comma-separated
-# ``output_files`` column identically.
+# Rename column, QC exclusion, and scans.tsv manifest patching for the mri
+# modality bidsmap maps.
 # ---------------------------------------------------------------------------
 
 # QC filter: boolean columns where "FALSE" means exclude from copy.
@@ -495,25 +481,16 @@ _EXCLUDE_IF_FALSE = ("recommend_for_use", "complete", "usable")
 _EXCLUDE_QC_RATINGS = {"FAIL", "UNCERTAIN"}
 
 # Columns dropped from the output scans.tsv produced by bidsmap -o.
-# rename: has been applied; task/acquisition/echo/run/suffix: redundant with filename.
-_SCANS_DROP_COLS = frozenset({"rename", "task", "acquisition", "echo", "run", "suffix"})
+# rename/physio: both have already been applied (rename to bids_name, physio
+# by xnatcli physioconvert, which must run before bidsmap -o).
+_SCANS_DROP_COLS = frozenset({"rename", "physio"})
 
 
-def _load_rename_map(
-    scans_tsv: Path,
-    path_column: str = "filename",
-    multi_path: bool = False,
-) -> tuple[dict[str, str], list[str]]:
-    """Read a scans-style TSV and return ``({rel_posix_path: new_bids_name}, warnings)``
-    for rows with a non-empty ``rename`` column, keyed by ``path_column``.
-    Returns an empty map if the file does not exist or cannot be read.
-
-    When ``multi_path`` is True, ``path_column`` holds a comma-separated list
-    of paths (physio's ``output_files``, since one source recording can
-    produce several outputs). ``rename`` then only applies when that list has
-    exactly one entry — a non-empty ``rename`` on a multi-output row cannot
-    unambiguously target one file, so it is skipped with a warning instead of
-    applied.
+def _load_rename_map(scans_tsv: Path) -> tuple[dict[str, str], list[str]]:
+    """Read mriscans.tsv-style TSV and return
+    ``({rel_posix_path: new_bids_name}, warnings)`` for rows with a
+    non-empty ``rename`` column, keyed by ``filename``. Returns an empty map
+    if the file does not exist or cannot be read.
     """
     rename_map: dict[str, str] = {}
     warnings: list[str] = []
@@ -522,21 +499,9 @@ def _load_rename_map(
     try:
         with scans_tsv.open(newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f, delimiter="\t"):
-                raw_path = (row.get(path_column) or "").strip()
+                raw_path = (row.get("filename") or "").strip()
                 rename = (row.get("rename") or "").strip()
-                if not raw_path or not rename:
-                    continue
-                if multi_path:
-                    paths = [p.strip() for p in raw_path.split(",") if p.strip()]
-                    if len(paths) != 1:
-                        warnings.append(
-                            f"WARNING: {raw_path}: rename is set but this row has "
-                            f"{len(paths)} output file(s); rename only applies to "
-                            "a single-output row and will be ignored."
-                        )
-                        continue
-                    rename_map[paths[0]] = rename
-                else:
+                if raw_path and rename:
                     rename_map[raw_path] = rename
     except OSError as exc:
         warnings.append(f"WARNING: could not read {scans_tsv}: {exc}")
@@ -565,14 +530,11 @@ def _load_scans_levels(scans_json: Path) -> dict[str, set[str]]:
 def _load_exclusion_info(
     scans_tsv: Path,
     scans_json: Path,
-    path_column: str = "filename",
-    multi_path: bool = False,
 ) -> tuple[set[str], list[str]]:
-    """Read a scans-style TSV and return ``(excluded, warnings)``.
+    """Read mriscans.tsv and return ``(excluded, warnings)``.
 
-    ``excluded`` is the set of individual relative POSIX paths (from
-    ``path_column``, split on comma when ``multi_path``) whose row triggers a
-    QC exclusion: ``recommend_for_use``, ``complete``, or ``usable`` ==
+    ``excluded`` is the set of ``filename`` values whose row triggers a QC
+    exclusion: ``recommend_for_use``, ``complete``, or ``usable`` ==
     ``"FALSE"`` (exact, case-sensitive), or ``qc_rating`` in
     ``{"FAIL", "UNCERTAIN"}``.
 
@@ -598,13 +560,7 @@ def _load_exclusion_info(
         return excluded, warnings
 
     for row in rows:
-        raw_path = (row.get(path_column) or "").strip()
-        paths = (
-            [p.strip() for p in raw_path.split(",") if p.strip()]
-            if multi_path
-            else ([raw_path] if raw_path else [])
-        )
-        label = ", ".join(paths) if paths else raw_path
+        label = (row.get("filename") or "").strip()
 
         # Warn about non-empty values that do not match any valid Level.
         for col, valid_vals in levels.items():
@@ -616,7 +572,7 @@ def _load_exclusion_info(
                     "this entry will be ignored for QC filtering."
                 )
 
-        if not paths:
+        if not label:
             continue
 
         # Collect all triggered exclusion criteria for this row.
@@ -629,7 +585,7 @@ def _load_exclusion_info(
             reasons.append(f"qc_rating={qc!r}")
 
         if reasons:
-            excluded.update(paths)
+            excluded.add(label)
             warnings.append(
                 f"WARNING: {label} excluded from copy "
                 f"({', '.join(reasons)})."
@@ -697,8 +653,7 @@ def _update_output_scans_tsv(
     except OSError:
         return
 
-    main_ext = _MODALITY_EXTS["mri"][0]
-    stem_rename = build_stem_rename(rename_map, main_ext)
+    stem_rename = build_stem_rename(rename_map, _MAIN_EXT)
 
     out_rows: list[dict] = []
     for row in rows:
@@ -708,7 +663,7 @@ def _update_output_scans_tsv(
 
         old_path = Path(old_filename)
         old_file = old_path.name
-        old_stem = old_file[: -len(main_ext)] if old_file.endswith(main_ext) else old_file
+        old_stem = old_file[: -len(_MAIN_EXT)] if old_file.endswith(_MAIN_EXT) else old_file
         old_parent_posix = old_path.parent.as_posix()
 
         if (old_parent_posix, old_stem) in stem_rename:
@@ -731,62 +686,6 @@ def _update_output_scans_tsv(
         print(f"WARNING: could not update {dest_scans}: {exc}", file=sys.stderr)
 
 
-# ---------------------------------------------------------------------------
-# physio modality: physioscans.tsv patching. Renaming beyond participant/
-# session (the bids_name/rename QC block) and QC exclusion mirror mri's
-# scans.tsv via the shared _load_rename_map/_load_exclusion_info above, keyed
-# by the comma-separated output_files column instead of a single filename.
-# ---------------------------------------------------------------------------
-
-
-def _update_physio_manifests(
-    dest_dir: Path,
-    participant_map: dict[str, str],
-    session_map: dict[tuple[str, str], str],
-    rename_lookup: dict[str, str],
-    excluded: set[str],
-) -> None:
-    """Patch the copied physioscans.tsv in place.
-
-    Updates ``participant_id``/``session_id`` directly (``source_path`` points
-    at the original raw recording, outside the output tree, and never
-    changes) and the comma-separated ``output_files`` path column via
-    ``rename_lookup``. Rows any of whose ``output_files`` were QC-excluded
-    from the copy are dropped, mirroring how mri's scans.tsv omits
-    QC-excluded rows.
-    """
-    scans_path = dest_dir / "physioscans.tsv"
-    if not scans_path.is_file():
-        return
-    try:
-        with scans_path.open(newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f, delimiter="\t")
-            fieldnames = list(reader.fieldnames or [])
-            rows = list(reader)
-    except OSError as exc:
-        print(f"WARNING: could not read {scans_path}: {exc}", file=sys.stderr)
-        return
-
-    def _row_excluded(row: dict[str, str]) -> bool:
-        paths = [p.strip() for p in (row.get("output_files") or "").split(",") if p.strip()]
-        return bool(paths) and any(p in excluded for p in paths)
-
-    rows = [r for r in rows if not _row_excluded(r)]
-    patch_id_columns(rows, participant_map, session_map)
-    if "output_files" in fieldnames:
-        patch_multi_path_column(rows, "output_files", rename_lookup)
-
-    try:
-        with scans_path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(
-                f, fieldnames=fieldnames, delimiter="\t", extrasaction="ignore",
-            )
-            writer.writeheader()
-            writer.writerows(rows)
-    except OSError as exc:
-        print(f"WARNING: could not update {scans_path}: {exc}", file=sys.stderr)
-
-
 def bidsmap_cmd(args: argparse.Namespace) -> int:
     input_root = Path(args.input).resolve()
     if not input_root.is_dir():
@@ -796,9 +695,6 @@ def bidsmap_cmd(args: argparse.Namespace) -> int:
     bids_dir = input_root / project
     if not bids_dir.is_dir():
         sys.exit(f"Error: BIDS dataset for project {project!r} not found at {bids_dir}")
-
-    modality = args.modality
-    main_ext, sidecar_exts = _MODALITY_EXTS[modality]
 
     # --- Step 1: always generate/update the map TSV ---
     rows, has_sessions, skipped = scan_pairs(bids_dir)
@@ -837,37 +733,28 @@ def bidsmap_cmd(args: argparse.Namespace) -> int:
 
     all_warnings: list[str] = []
 
-    if modality == "mri":
-        source_scans = bids_dir / "mriscans.tsv"
-        source_scans_json = bids_dir / "mriscans.json"
-        skip_root_files = frozenset({"mriscans.tsv", "mriscans.json"})
-        path_column, multi_path = "filename", False
-    else:
-        source_scans = bids_dir / "physioscans.tsv"
-        source_scans_json = bids_dir / "physioscans.json"
-        skip_root_files = frozenset()
-        path_column, multi_path = "output_files", True
+    source_scans = bids_dir / "mriscans.tsv"
+    source_scans_json = bids_dir / "mriscans.json"
+    skip_root_files = frozenset({
+        "mriscans.tsv", "mriscans.json", "physioconvert_qc.tsv", "physioconvert_qc.json",
+    })
 
-    rename_map, rename_warnings = _load_rename_map(
-        source_scans, path_column=path_column, multi_path=multi_path,
-    )
+    rename_map, rename_warnings = _load_rename_map(source_scans)
     all_warnings.extend(rename_warnings)
     for w in rename_warnings:
         print(w)
 
     # QC filter: determine which files to exclude before building the copy plan.
-    excluded, qc_warnings = _load_exclusion_info(
-        source_scans, source_scans_json, path_column=path_column, multi_path=multi_path,
-    )
+    excluded, qc_warnings = _load_exclusion_info(source_scans, source_scans_json)
     all_warnings.extend(qc_warnings)
     for w in qc_warnings:
         print(w)
 
-    excluded_stems = build_excluded_stems(excluded, main_ext)
+    excluded_stems = build_excluded_stems(excluded, _MAIN_EXT)
 
     plan = build_rename_copy_plan(
         bids_dir, participant_map, session_map, rename_map, excluded_stems,
-        main_ext=main_ext, sidecar_exts=sidecar_exts, skip_root_files=skip_root_files,
+        main_ext=_MAIN_EXT, sidecar_exts=_SIDECAR_EXTS, skip_root_files=skip_root_files,
     )
     plan, collision_warnings = check_collisions(plan)
     all_warnings.extend(collision_warnings)
@@ -902,21 +789,15 @@ def bidsmap_cmd(args: argparse.Namespace) -> int:
         print(w)
 
     rename_lookup = rename_lookup_from_plan(plan, bids_dir)
-    if modality == "mri":
-        # Promote mriscans.tsv/mriscans.json to BIDS's canonical scans.tsv/
-        # scans.json in the mapped output (never physio's own physioscans.tsv,
-        # so the two never collide when both land under the same PROJECT/).
-        _update_output_scans_tsv(
-            source_scans, dest_bids / "scans.tsv", participant_map, session_map,
-            rename_map, excluded, rename_lookup,
-        )
-        if source_scans_json.is_file():
-            shutil.copyfile(source_scans_json, dest_bids / "scans.json")
-        _update_participants_tsv(dest_bids / "participants.tsv", participant_map)
-    else:
-        _update_physio_manifests(
-            dest_bids, participant_map, session_map, rename_lookup, excluded,
-        )
+    # Promote mriscans.tsv/mriscans.json to BIDS's canonical scans.tsv/scans.json
+    # in the mapped output (mriscans.tsv itself is not copied verbatim).
+    _update_output_scans_tsv(
+        source_scans, dest_bids / "scans.tsv", participant_map, session_map,
+        rename_map, excluded, rename_lookup,
+    )
+    if source_scans_json.is_file():
+        shutil.copyfile(source_scans_json, dest_bids / "scans.json")
+    _update_participants_tsv(dest_bids / "participants.tsv", participant_map)
 
     print(
         f"Copied {len(to_copy)} file(s) to {dest_bids} "

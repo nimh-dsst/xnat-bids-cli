@@ -1,0 +1,73 @@
+{
+    "filename": {
+        "Description": "The associated mri scan's filename (relative NIfTI path), matching mriscans.tsv/scans.tsv's filename column. Primary key of this table."
+    },
+    "physio": {
+        "Description": "The raw physio basename (mriscans.tsv's physio column value) used to produce this row's output, as of the last conversion."
+    },
+    "status": {
+        "Description": "Per-association processing outcome, regenerated every run.",
+        "Levels": {
+            "CONVERTED": "phys2bids read the raw file and its BIDS _physio.tsv.gz/.json were written next to the paired NIfTI.",
+            "NOT_PHYSIO": "Matched a supported extension but could not be loaded as physiological data.",
+            "READER_MISSING": "The optional reader package phys2bids needs for this format is not installed.",
+            "CONVERT_ERROR": "phys2bids raised while converting, produced no .tsv.gz output, or its destination was already occupied by a different file.",
+            "SOURCE_MISSING": "PhysioParent was unset/not a directory, the named basename was not found under it, or the mriscans.tsv row is missing participant_id/datatype.",
+            "COLLISION": "This physio basename is referenced by more than one mriscans.tsv row; none of them were converted until resolved.",
+            "ROW_GONE": "The mriscans.tsv row this physio conversion was associated with no longer has a matching physio association; row and any prior QC edits are preserved."
+        }
+    },
+    "n_channels": {
+        "Description": "Number of channels phys2bids reported for the recording (its ch_amount, which includes the leading time channel). Blank for associations that were not loaded as physio."
+    },
+    "sampling_frequencies": {
+        "Description": "Unique channel sampling frequencies in hertz, ascending, comma-separated (e.g. 1000,500). A single value for the common single-frequency case. Aligned position-by-position with sample_count and duration_seconds."
+    },
+    "sample_count": {
+        "Description": "Number of samples per sampling frequency, comma-separated and aligned with sampling_frequencies (the longest channel recorded at each frequency). Blank for associations that were not loaded as physio."
+    },
+    "duration_seconds": {
+        "Description": "Acquisition duration in seconds at 0.001 s precision, computed as sample_count / sampling_frequency, comma-separated and aligned with sampling_frequencies. Blank for associations that were not loaded as physio."
+    },
+    "output_files": {
+        "Description": "Converted BIDS _physio.tsv.gz output path(s) relative to OUTPUT_DIR/PROJECT/, comma-separated; multiple when phys2bids split the recording by frequency. Blank when nothing was written."
+    },
+    "bids_name": {
+        "Description": "The portion of each output file's basename between the participant_id[_session_id]_ prefix and the .tsv.gz extension, comma-separated and aligned with output_files. Regenerated every run from the current output(s); blank when there are none."
+    },
+    "recommend_for_use": {
+        "Description": "Whether the recording is recommended for use. Empty until reviewed by an end-user.",
+        "Levels": {
+            "TRUE": "The recording is recommended for use.",
+            "FALSE": "The recording is not recommended for use."
+        }
+    },
+    "complete": {
+        "Description": "Whether the recording was acquired at its complete, as-intended length. Empty until reviewed by an end-user.",
+        "Levels": {
+            "TRUE": "The acquisition is complete.",
+            "FALSE": "The acquisition is incomplete."
+        }
+    },
+    "usable": {
+        "Description": "Whether the recording is usable at all. Empty until reviewed by an end-user.",
+        "Levels": {
+            "TRUE": "The recording is usable.",
+            "FALSE": "The recording is not usable."
+        }
+    },
+    "qc_rating": {
+        "Description": "Acquisition quality-control rating. Empty until reviewed by an end-user.",
+        "Levels": {
+            "PASS": "The acquisition passed quality control.",
+            "FAIL": "The acquisition failed quality control.",
+            "UNCERTAIN": "The quality-control outcome is uncertain."
+        }
+    },
+    "rating_reason": {
+        "Description": "Free-text reason for the qc_rating, open to any string of any length. Empty by default."
+    },
+    "qc_notes": {
+        "Description": "Free-text notes about the quality control not captured by other fields, open to any string of any length. Empty by default."
+    }
+}

@@ -14,11 +14,26 @@
     "size_bytes": {
         "Description": "Size of the NIfTI file on disk, in bytes."
     },
+    "participant_id": {
+        "Description": "BIDS participant identifier (sub-<label>) parsed from the filename."
+    },
+    "session_id": {
+        "Description": "BIDS session identifier (ses-<label>) parsed from the filename."
+    },
+    "datatype": {
+        "Description": "BIDS datatype, taken from the name of the file's parent directory (e.g. anat, func, dwi, fmap)."
+    },
+    "suffix": {
+        "Description": "BIDS suffix, the portion of the basename after the last underscore and before the extension. Never empty."
+    },
     "bids_name": {
         "Description": "The portion of the file basename between the sub-<label>_ses-<label>_ prefix and the .nii.gz extension."
     },
     "rename": {
         "Description": "Free-text field for an end-user to record a corrected bids_name when the file needs renaming. Empty by default."
+    },
+    "physio": {
+        "Description": "Free-text field for an end-user to record the basename (with extension) of a raw physio recording found under PhysioParent that was acquired alongside this scan. Consumed by xnatcli physioconvert to convert and place that recording directly, using this row's participant_id/session_id/datatype for placement and its bids_name/rename for naming. Empty by default; never auto-populated by mriconvert."
     },
     "recommend_for_use": {
         "Description": "Whether the file is recommended for use. Empty until reviewed by an end-user.",
@@ -55,28 +70,8 @@
     "qc_notes": {
         "Description": "Free-text notes about the quality control not captured by other fields, open to any string of any length. Empty by default."
     },
-    "participant_id": {
-        "Description": "BIDS participant identifier (sub-<label>) parsed from the filename."
-    },
-    "session_id": {
-        "Description": "BIDS session identifier (ses-<label>) parsed from the filename."
-    },
-    "datatype": {
-        "Description": "BIDS datatype, taken from the name of the file's parent directory (e.g. anat, func, dwi, fmap)."
-    },
-    "task": {
-        "Description": "The task-<label> entity parsed from the filename, including the task- prefix (e.g. task-rest). Empty when the entity is absent."
-    },
-    "acquisition": {
-        "Description": "The acq-<label> entity parsed from the filename, including the acq- prefix (e.g. acq-highres). Empty when the entity is absent."
-    },
-    "echo": {
-        "Description": "The echo-<index> entity parsed from the filename, including the echo- prefix (e.g. echo-1). Empty when the entity is absent."
-    },
-    "run": {
-        "Description": "The run-<index> entity parsed from the filename, including the run- prefix (e.g. run-2). Empty when the entity is absent."
-    },
-    "suffix": {
-        "Description": "BIDS suffix, the portion of the basename after the last underscore and before the extension. Never empty."
+    "PhysioParent": {
+        "Description": "Absolute path to the parent directory of all raw physio recordings for this project, stored in a flat directory structure. Set via mriconvert's -y/--physio; preserved from a prior run if omitted.",
+        "Value": ""
     }
 }
