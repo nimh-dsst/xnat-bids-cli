@@ -325,16 +325,66 @@ def _draft_config(target: Path) -> None:
                         "criteria": {field: value},
                     })
 
-    config_path = target / "dcm2bids_config.json"
-    if config_path.exists():
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        config_path = target / f"dcm2bids_config_{ts}.json"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    config_path = target / f"dcm2bids_config_{ts}.json"
 
     config_path.write_text(
         json.dumps({"descriptions": descriptions}, indent=2) + "\n"
     )
     print(
         f"Drafted dcm2bids config at {config_path} "
+        f"({len(descriptions)} description(s))."
+    )
+
+
+def _draft_blank_config(target: Path) -> None:
+    """Draft a bare-bones dcm2bids config with one entry per unique identity.
+
+    Each description has blank datatype/suffix/custom_entities and a single
+    criteria field (SeriesDescription, falling back to ProtocolName or
+    SidecarFilename per `_identity_for_sidecar`). Intended as a manually
+    editable starting point rather than the BidsGuess-derived draft from
+    `_draft_config`.
+    """
+    helper_root = target / "tmp_dcm2bids" / "helper"
+
+    if not helper_root.is_dir():
+        print(f"Helper output directory not found: {helper_root}; skipping blank config draft.")
+        return
+
+    json_files = sorted(helper_root.rglob("*.json"))
+    if not json_files:
+        print(f"No JSON sidecars found under {helper_root}; no blank config drafted.")
+        return
+
+    seen: dict[tuple[str, str], None] = {}
+    for jf in json_files:
+        try:
+            data = json.loads(jf.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Warning: skipping {jf.name}: cannot read JSON ({e}).")
+            continue
+        _identity, criteria = _identity_for_sidecar(jf.name, data)
+        ckey = next(iter(criteria.items()))
+        seen.setdefault(ckey, None)
+
+    descriptions = [
+        {
+            "datatype": "",
+            "suffix": "",
+            "custom_entities": [],
+            "criteria": {field: value},
+        }
+        for field, value in seen
+    ]
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    config_path = target / f"dcm2bids_config_blank_{ts}.json"
+    config_path.write_text(
+        json.dumps({"descriptions": descriptions}, indent=2) + "\n"
+    )
+    print(
+        f"Drafted blank dcm2bids config at {config_path} "
         f"({len(descriptions)} description(s))."
     )
 
@@ -424,7 +474,7 @@ def _run_helper(
     return STATUS_COMPLETE, None
 
 
-def mrihelp_cmd(args: argparse.Namespace) -> int:
+def mriconfig_cmd(args: argparse.Namespace) -> int:
     if args.nprep < 1:
         sys.exit("Error: -n/--nprep must be >= 1.")
 
@@ -436,7 +486,7 @@ def mrihelp_cmd(args: argparse.Namespace) -> int:
     project = experiments[0][0]
 
     output_dir = Path(args.output).resolve()
-    target = output_dir / f"PROJECT-{project}_mrihelp"
+    target = output_dir / f"PROJECT-{project}_mriconfig"
 
     # --maps: skip running dcm2bids_helper and only (re)draft the dcm2bids config
     # from the helper JSON sidecars already present under <target>. The helper
@@ -444,10 +494,12 @@ def mrihelp_cmd(args: argparse.Namespace) -> int:
     if args.maps:
         if not target.is_dir():
             sys.exit(
-                f"Error: mrihelp output directory not found: {target}; run "
-                "mrihelp without -m/--maps first."
+                f"Error: mriconfig output directory not found: {target}; run "
+                "mriconfig without -m/--maps first."
             )
         _draft_config(target)
+        if args.blank:
+            _draft_blank_config(target)
         return 0
 
     helper_path = _require_tool("dcm2bids_helper")
@@ -459,7 +511,7 @@ def mrihelp_cmd(args: argparse.Namespace) -> int:
     if args.log:
         while True:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_path = output_dir / "log" / f"mrihelp_{ts}_log.csv"
+            log_path = output_dir / "log" / f"mriconfig_{ts}_log.csv"
             if not log_path.exists():
                 break
             time.sleep(1)
@@ -500,5 +552,7 @@ def mrihelp_cmd(args: argparse.Namespace) -> int:
         print(f"Log written to {log_path}")
 
     _draft_config(target)
+    if args.blank:
+        _draft_blank_config(target)
 
     return 0 if counts[STATUS_FAILURE] == 0 else 1

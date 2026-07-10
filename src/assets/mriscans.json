@@ -1,4 +1,8 @@
 {
+    "PhysioParent": {
+        "Description": "Absolute path to the parent directory of all raw physio recordings for this project, stored in a flat directory structure. Set via mriconvert's -y/--physio; preserved from a prior run if omitted.",
+        "Value": ""
+    },
     "filename": {
         "Description": "Path to the NIfTI file relative to the root inside the PROJECT (BIDS dataset) directory, with no leading periods or slashes."
     },
@@ -69,9 +73,5 @@
     },
     "qc_notes": {
         "Description": "Free-text notes about the quality control not captured by other fields, open to any string of any length. Empty by default."
-    },
-    "PhysioParent": {
-        "Description": "Absolute path to the parent directory of all raw physio recordings for this project, stored in a flat directory structure. Set via mriconvert's -y/--physio; preserved from a prior run if omitted.",
-        "Value": ""
     }
 }

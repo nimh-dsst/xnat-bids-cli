@@ -5,8 +5,8 @@ from .bidsmap import bidsmap_cmd
 from .cubids import cubids_cmd
 from .download import download_cmd
 from .login import login_cmd
+from .mriconfig import mriconfig_cmd
 from .mriconvert import mriconvert_cmd
-from .mrihelp import mrihelp_cmd
 from .physioconvert import physioconvert_cmd
 from .query import query_cmd
 
@@ -23,6 +23,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Prompt for XNAT server, username, and password; verify; save to ~/.xnatcli/credentials.cfg.",
     )
     login_parser.set_defaults(func=login_cmd)
+
+    query_parser = subparsers.add_parser(
+        "query",
+        help="Write a CSV of (project, subject, experiment) triplets for a project or subject.",
+    )
+    query_parser.add_argument(
+        "project",
+        metavar="PROJECT",
+        help="XNAT project (ID or label).",
+    )
+    query_parser.add_argument(
+        "subject",
+        metavar="SUBJECT",
+        nargs="?",
+        default=None,
+        help="Optional XNAT subject (ID or label). If omitted, all subjects "
+        "in the project are listed.",
+    )
+    query_parser.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        metavar="OUTPUT_DIR",
+        help="Directory to write the CSV file into.",
+    )
+    query_parser.set_defaults(func=query_cmd)
 
     download_parser = subparsers.add_parser(
         "download",
@@ -86,38 +112,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     download_parser.set_defaults(func=download_cmd)
 
-    query_parser = subparsers.add_parser(
-        "query",
-        help="Write a CSV of (project, subject, experiment) triplets for a project or subject.",
-    )
-    query_parser.add_argument(
-        "project",
-        metavar="PROJECT",
-        help="XNAT project (ID or label).",
-    )
-    query_parser.add_argument(
-        "subject",
-        metavar="SUBJECT",
-        nargs="?",
-        default=None,
-        help="Optional XNAT subject (ID or label). If omitted, all subjects "
-        "in the project are listed.",
-    )
-    query_parser.add_argument(
-        "-o",
-        "--output",
-        required=True,
-        metavar="OUTPUT_DIR",
-        help="Directory to write the CSV file into.",
-    )
-    query_parser.set_defaults(func=query_cmd)
-
-    mrihelp_parser = subparsers.add_parser(
-        "mrihelp",
+    mriconfig_parser = subparsers.add_parser(
+        "mriconfig",
         help="Run dcm2bids_helper on one or many downloaded XNAT experiment "
         "directories and draft a project-level dcm2bids config.",
     )
-    mrihelp_parser.add_argument(
+    mriconfig_parser.add_argument(
         "-i",
         "--input",
         required=True,
@@ -125,39 +125,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Root directory holding PROJECT/SUBJECT/EXPERIMENT "
         "subdirectories (i.e., the output of `xnatcli download`).",
     )
-    mrihelp_source = (
-        mrihelp_parser.add_mutually_exclusive_group(required=True)
+    mriconfig_source = (
+        mriconfig_parser.add_mutually_exclusive_group(required=True)
     )
-    mrihelp_source.add_argument(
+    mriconfig_source.add_argument(
         "-1",
         dest="triplet",
         nargs=3,
         metavar=("PROJECT", "SUBJECT", "EXPERIMENT"),
-        help="Run helper on a single experiment. Each value must match the "
+        help="Run dcm2bids_helper on a single experiment. Each value must match the "
         "corresponding directory name under INPUT_DIR.",
     )
-    mrihelp_source.add_argument(
+    mriconfig_source.add_argument(
         "-s",
         "--subject",
         nargs=2,
         metavar=("PROJECT", "SUBJECT"),
-        help="Run helper on every experiment of one subject.",
+        help="Run dcm2bids_helper on every experiment of one subject.",
     )
-    mrihelp_source.add_argument(
+    mriconfig_source.add_argument(
         "-p",
         "--project",
         metavar="PROJECT",
-        help="Run helper on every experiment of every subject in a project.",
+        help="Run dcm2bids_helper on every experiment of every subject in a project.",
     )
-    mrihelp_parser.add_argument(
+    mriconfig_parser.add_argument(
         "-o",
         "--output",
         required=True,
         metavar="OUTPUT_DIR",
-        help="Directory to write the mrihelp output into. The helper "
-        "results land under OUTPUT_DIR/PROJECT-<PROJECT>_mrihelp/.",
+        help="Directory to write the mriconfig output into. The dcm2bids_helper "
+        "results land under OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/.",
     )
-    mrihelp_parser.add_argument(
+    mriconfig_parser.add_argument(
         "-n",
         "--nprep",
         type=int,
@@ -166,32 +166,42 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of parallel dcm2bids_helper invocations, one per "
         "experiment per core (default 1).",
     )
-    mrihelp_parser.add_argument(
+    mriconfig_parser.add_argument(
         "-l",
         "--log",
         action="store_true",
         help="Write a per-experiment log CSV to "
-        "OUTPUT_DIR/log/mrihelp_<YYYYMMDD_HHMMSS>_log.csv.",
+        "OUTPUT_DIR/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv.",
     )
-    mrihelp_parser.add_argument(
+    mriconfig_parser.add_argument(
         "-d",
         "--delete",
         action="store_true",
-        help="Delete *.nii.gz files from each experiment's helper subdir "
-        "(OUTPUT_DIR/PROJECT-<PROJECT>_mrihelp/tmp_dcm2bids/helper/<EXPERIMENT>/) "
+        help="Delete *.nii.gz files from each experiment's dcm2bids_helper subdir "
+        "(OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/tmp_dcm2bids/helper/<EXPERIMENT>/) "
         "right after dcm2bids_helper returns, regardless of STATUS. JSON "
         "sidecars (used by the config draft) are kept.",
     )
-    mrihelp_parser.add_argument(
+    mriconfig_parser.add_argument(
         "-m",
         "--maps",
         action="store_true",
         help="Skip running dcm2bids_helper; only (re)draft the dcm2bids config "
-        "from the existing helper JSON sidecars already under "
-        "OUTPUT_DIR/PROJECT-<PROJECT>_mrihelp/. dcm2bids_helper and dcm2niix "
+        "from the existing dcm2bids_helper JSON sidecars already under "
+        "OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/. dcm2bids_helper and dcm2niix "
         "are not required with this option.",
     )
-    mrihelp_parser.set_defaults(func=mrihelp_cmd)
+    mriconfig_parser.add_argument(
+        "-b",
+        "--blank",
+        action="store_true",
+        help="Also draft a bare-bones dcm2bids config with blank datatype/suffix/"
+        "custom_entities, one entry per unique SeriesDescription (falling back to "
+        "ProtocolName or filename) across the dcm2bids_helper JSON sidecars. "
+        "Written separately as OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/"
+        "dcm2bids_config_blank_<YYYYMMDD_HHMMSS>.json.",
+    )
+    mriconfig_parser.set_defaults(func=mriconfig_cmd)
 
     mriconvert_parser = subparsers.add_parser(
         "mriconvert",
@@ -242,11 +252,23 @@ def build_parser() -> argparse.ArgumentParser:
         "BIDS dataset lives at OUTPUT_DIR/PROJECT/.",
     )
     mriconvert_parser.add_argument(
+        "-y",
+        "--physio",
+        dest="physio_parent",
+        metavar="PHYSIO_PARENT_DIR",
+        default=None,
+        help="Optional absolute path to the flat directory holding all raw "
+        "physio recordings for this project. Recorded as the top-level "
+        "'PhysioParent' key in mriscans.json for xnatcli physioconvert to "
+        "resolve mriscans.tsv's 'physio' column against. If omitted, a "
+        "PhysioParent recorded on a prior run is preserved.",
+    )
+    mriconvert_parser.add_argument(
         "-c",
         "--config",
         metavar="CONFIG_FILE",
         help="Path to the dcm2bids config JSON to use (e.g., the one drafted "
-        "by `xnatcli mrihelp`). Required unless -m/--maps is given.",
+        "by `xnatcli mriconfig`). Required unless -m/--maps is given.",
     )
     mriconvert_parser.add_argument(
         "-n",
@@ -294,84 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
         "BIDS data under OUTPUT_DIR. -c/--config, pydicom, dcm2bids, and "
         "dcm2niix are not required with this option.",
     )
-    mriconvert_parser.add_argument(
-        "-y",
-        "--physio",
-        dest="physio_parent",
-        metavar="PHYSIO_PARENT_DIR",
-        default=None,
-        help="Optional absolute path to the flat directory holding all raw "
-        "physio recordings for this project. Recorded as the top-level "
-        "'PhysioParent' key in mriscans.json for xnatcli physioconvert to "
-        "resolve mriscans.tsv's 'physio' column against. If omitted, a "
-        "PhysioParent recorded on a prior run is preserved.",
-    )
     mriconvert_parser.set_defaults(func=mriconvert_cmd)
-
-    cubids_parser = subparsers.add_parser(
-        "cubids",
-        help="Run cubids add-nifti-info and cubids group on a BIDS dataset.",
-    )
-    cubids_parser.add_argument(
-        "-i",
-        "--input",
-        required=True,
-        metavar="INPUT_DIR",
-        help="Parent directory holding the BIDS dataset at INPUT_DIR/PROJECT/ "
-        "(i.e., the output of `xnatcli mriconvert`). CuBIDS outputs land "
-        "under INPUT_DIR/PROJECT-<PROJECT>_cubids/.",
-    )
-    cubids_parser.add_argument(
-        "-p",
-        "--project",
-        required=True,
-        metavar="PROJECT",
-        help="Project directory name under INPUT_DIR identifying the BIDS "
-        "dataset to process.",
-    )
-    cubids_parser.add_argument(
-        "-l",
-        "--log",
-        action="store_true",
-        help="Write a per-step log CSV to "
-        "INPUT_DIR/PROJECT-<PROJECT>_cubids/log/cubids_<YYYYMMDD_HHMMSS>_log.csv.",
-    )
-    cubids_parser.set_defaults(func=cubids_cmd)
-
-    bidsmap_parser = subparsers.add_parser(
-        "bidsmap",
-        help="Generate (or update) a participant/session map TSV for a BIDS "
-        "dataset at INPUT_DIR/PROJECT/ produced by xnatcli mriconvert.",
-    )
-    bidsmap_parser.add_argument(
-        "-i",
-        "--input",
-        required=True,
-        metavar="INPUT_DIR",
-        help="Root directory holding the BIDS dataset at INPUT_DIR/PROJECT/ "
-        "(i.e., the output of `xnatcli mriconvert`). The map TSV is written "
-        "here as PROJECT-<PROJECT>_bidsmap.tsv.",
-    )
-    bidsmap_parser.add_argument(
-        "-p",
-        "--project",
-        required=True,
-        metavar="PROJECT",
-        help="Project directory name under INPUT_DIR identifying the BIDS "
-        "dataset to scan for participants and sessions.",
-    )
-    bidsmap_parser.add_argument(
-        "-o",
-        "--output",
-        metavar="OUTPUT_DIR",
-        help="When provided, apply all renames from PROJECT-<PROJECT>_bidsmap.tsv "
-        "(participant_rename, session_rename) — and mriscans.tsv's own rename "
-        "column — by recursively copying the BIDS dataset to OUTPUT_DIR/PROJECT/ "
-        "with every rename applied. The map TSV generation always runs first "
-        "regardless. OUTPUT_DIR/PROJECT/ must not already exist. Skips "
-        "tmp_dcm2bids and log scratch directories.",
-    )
-    bidsmap_parser.set_defaults(func=bidsmap_cmd)
 
     physioconvert_parser = subparsers.add_parser(
         "physioconvert",
@@ -422,6 +367,71 @@ def build_parser() -> argparse.ArgumentParser:
         "physioconvert_qc.tsv.",
     )
     physioconvert_parser.set_defaults(func=physioconvert_cmd)
+
+    bidsmap_parser = subparsers.add_parser(
+        "bidsmap",
+        help="Generate (or update) a participant/session map TSV for a BIDS "
+        "dataset at INPUT_DIR/PROJECT/ produced by xnatcli mriconvert.",
+    )
+    bidsmap_parser.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        metavar="INPUT_DIR",
+        help="Root directory holding the BIDS dataset at INPUT_DIR/PROJECT/ "
+        "(i.e., the output of `xnatcli mriconvert`). The map TSV is written "
+        "here as PROJECT-<PROJECT>_bidsmap.tsv.",
+    )
+    bidsmap_parser.add_argument(
+        "-p",
+        "--project",
+        required=True,
+        metavar="PROJECT",
+        help="Project directory name under INPUT_DIR identifying the BIDS "
+        "dataset to scan for participants and sessions.",
+    )
+    bidsmap_parser.add_argument(
+        "-o",
+        "--output",
+        metavar="OUTPUT_DIR",
+        help="When provided, apply all renames from PROJECT-<PROJECT>_bidsmap.tsv "
+        "(participant_rename, session_rename) — and mriscans.tsv's own rename "
+        "column — by recursively copying the BIDS dataset to OUTPUT_DIR/PROJECT/ "
+        "with every rename applied. The map TSV generation always runs first "
+        "regardless. OUTPUT_DIR/PROJECT/ must not already exist. Skips "
+        "tmp_dcm2bids and log scratch directories.",
+    )
+    bidsmap_parser.set_defaults(func=bidsmap_cmd)
+
+    cubids_parser = subparsers.add_parser(
+        "cubids",
+        help="Run cubids add-nifti-info and cubids group on a BIDS dataset.",
+    )
+    cubids_parser.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        metavar="INPUT_DIR",
+        help="Parent directory holding the BIDS dataset at INPUT_DIR/PROJECT/ "
+        "(i.e., the output of `xnatcli mriconvert`). CuBIDS outputs land "
+        "under INPUT_DIR/PROJECT-<PROJECT>_cubids/.",
+    )
+    cubids_parser.add_argument(
+        "-p",
+        "--project",
+        required=True,
+        metavar="PROJECT",
+        help="Project directory name under INPUT_DIR identifying the BIDS "
+        "dataset to process.",
+    )
+    cubids_parser.add_argument(
+        "-l",
+        "--log",
+        action="store_true",
+        help="Write a per-step log CSV to "
+        "INPUT_DIR/PROJECT-<PROJECT>_cubids/log/cubids_<YYYYMMDD_HHMMSS>_log.csv.",
+    )
+    cubids_parser.set_defaults(func=cubids_cmd)
 
     return parser
 
