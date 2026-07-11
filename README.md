@@ -67,7 +67,7 @@ Writes a CSV of one row per experiment — every experiment in a project, or eve
 1. Loads credentials from `~/.xnatcli/credentials.cfg`; if the file is missing or incomplete, exits with a message telling you to run `xnatcli login`.
 2. Connects to the stored server via PyXNAT.
 3. Verifies the project exists (and the subject, if provided); exits with an error if not.
-4. Iterates subjects and experiments and writes one row per experiment with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE`. If the project (or subject) exists but has no experiments, a header-only CSV is written. An existing output file is overwritten silently.
+4. Iterates subjects and experiments and writes one row per experiment with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE`, sorted by `SUBJECT_LABEL` then `EXPERIMENT_LABEL`. If the project (or subject) exists but has no experiments, a header-only CSV is written. An existing output file is overwritten silently.
 
 ```bash
 xnatcli query PROJECT [SUBJECT] -o OUTPUT_DIR

@@ -60,6 +60,8 @@ def _collect_rows(
                 _experiment_date_yyyymmdd(exp_obj),
             ))
 
+    rows.sort(key=lambda row: (row[1], row[3]))
+
     return rows
 
 
