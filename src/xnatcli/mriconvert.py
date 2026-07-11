@@ -433,7 +433,7 @@ def _report_scans_deviations(
     bids_root: Path, deviations: list[tuple[str, str]]
 ) -> None:
     """Print one WARNING per deviation to stdout and write them to a log
-    file under <output>/log/."""
+    file under <output>/PROJECT_ID/log/."""
     project = bids_root.name
     lines = [
         f"WARNING: mriscans.tsv deviation [{project}] {msg}"
@@ -442,10 +442,10 @@ def _report_scans_deviations(
     for line in lines:
         _safe_print(line)
 
-    log_dir = bids_root.parent / "log"
+    log_dir = bids_root / "log"
     log_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = log_dir / f"scans_deviations_{project}_{ts}.log"
+    log_path = log_dir / f"scans_deviations_{ts}.log"
     with log_path.open("w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     _safe_print(
@@ -621,12 +621,13 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
         )
 
     sessions = _discover_sessions(input_root, args)
+    project = sessions[0][0]
 
     log_path: Path | None = None
     if args.log:
         while True:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_path = output_dir / "log" / f"mriconvert_{ts}_log.csv"
+            log_path = output_dir / project / "log" / f"mriconvert_{ts}_log.csv"
             if not log_path.exists():
                 break
             time.sleep(1)
