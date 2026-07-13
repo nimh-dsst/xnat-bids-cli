@@ -487,7 +487,7 @@ _SCANS_DROP_COLS = frozenset({"rename", "physio"})
 
 
 def _load_rename_map(scans_tsv: Path) -> tuple[dict[str, str], list[str]]:
-    """Read mriscans.tsv-style TSV and return
+    """Read mriconvert_qc.tsv-style TSV and return
     ``({rel_posix_path: new_bids_name}, warnings)`` for rows with a
     non-empty ``rename`` column, keyed by ``filename``. Returns an empty map
     if the file does not exist or cannot be read.
@@ -531,7 +531,7 @@ def _load_exclusion_info(
     scans_tsv: Path,
     scans_json: Path,
 ) -> tuple[set[str], list[str]]:
-    """Read mriscans.tsv and return ``(excluded, warnings)``.
+    """Read mriconvert_qc.tsv and return ``(excluded, warnings)``.
 
     ``excluded`` is the set of ``filename`` values whose row triggers a QC
     exclusion: ``recommend_for_use``, ``complete``, or ``usable`` ==
@@ -632,7 +632,7 @@ def _update_output_scans_tsv(
     excluded: set[str],
     rename_lookup: dict[str, str],
 ) -> None:
-    """Read ``source_scans`` (e.g. ``INPUT_DIR/PROJECT/mriscans.tsv``) and
+    """Read ``source_scans`` (e.g. ``INPUT_DIR/PROJECT/mriconvert_qc.tsv``) and
     write the renamed/QC-filtered table to ``dest_scans`` (BIDS's canonical
     ``OUTPUT_DIR/PROJECT/scans.tsv``), promoting the manifest to its final
     name in the mapped output.
@@ -733,10 +733,10 @@ def bidsmap_cmd(args: argparse.Namespace) -> int:
 
     all_warnings: list[str] = []
 
-    source_scans = bids_dir / "mriscans.tsv"
-    source_scans_json = bids_dir / "mriscans.json"
+    source_scans = bids_dir / "mriconvert_qc.tsv"
+    source_scans_json = bids_dir / "mriconvert_qc.json"
     skip_root_files = frozenset({
-        "mriscans.tsv", "mriscans.json", "physioconvert_qc.tsv", "physioconvert_qc.json",
+        "mriconvert_qc.tsv", "mriconvert_qc.json", "physioconvert_qc.tsv", "physioconvert_qc.json",
     })
 
     rename_map, rename_warnings = _load_rename_map(source_scans)
@@ -789,8 +789,8 @@ def bidsmap_cmd(args: argparse.Namespace) -> int:
         print(w)
 
     rename_lookup = rename_lookup_from_plan(plan, bids_dir)
-    # Promote mriscans.tsv/mriscans.json to BIDS's canonical scans.tsv/scans.json
-    # in the mapped output (mriscans.tsv itself is not copied verbatim).
+    # Promote mriconvert_qc.tsv/mriconvert_qc.json to BIDS's canonical scans.tsv/scans.json
+    # in the mapped output (mriconvert_qc.tsv itself is not copied verbatim).
     _update_output_scans_tsv(
         source_scans, dest_bids / "scans.tsv", participant_map, session_map,
         rename_map, excluded, rename_lookup,

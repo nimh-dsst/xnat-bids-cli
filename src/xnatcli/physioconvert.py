@@ -11,7 +11,9 @@ from datetime import datetime
 from pathlib import Path
 
 # QC/status manifest written at the mri BIDS project root, alongside
-# mriconvert's mriscans.tsv/scans.tsv.
+# mriconvert's mriconvert_qc.tsv/scans.tsv. Fully regenerated every run from the
+# current mriconvert_qc.tsv content -- a visual reference for an expert reviewer,
+# not a store consulted by a later run.
 _QC_FILENAME = "physioconvert_qc.tsv"
 
 # Static data-dictionary sidecar copied next to the TSV on each run.
@@ -20,26 +22,12 @@ _QC_DICT_FILENAME = "physioconvert_qc.json"
 # BIDS suffix for continuous physiological recordings.
 _SUFFIX = "physio"
 
-# Post-conversion review columns the user edits by hand, mirroring
-# mriconvert's scans.tsv QC block. Never regenerated once set — preserved
-# across runs verbatim.
-_QC_USER_COLUMNS = (
-    "recommend_for_use",
-    "complete",
-    "usable",
-    "qc_rating",
-    "rating_reason",
-    "qc_notes",
-)
-# physioconvert_qc.tsv holds: the physio basename used and the regenerated
-# status/metrics, the user-owned QC block, and — last — the mri row this
-# conversion is keyed to and the regenerated output path(s)/bids_name.
-_QC_COLUMNS = (
-    ["physio", "status", "n_channels", "sampling_frequencies",
-     "sample_count", "duration_seconds"]
-    + list(_QC_USER_COLUMNS)
-    + ["filename", "output_files", "bids_name"]
-)
+# physioconvert_qc.tsv holds: the physio basename used, keyed first, and the
+# regenerated status/metrics for its conversion.
+_QC_COLUMNS = [
+    "physio", "status", "n_channels", "sampling_frequencies",
+    "sample_count", "duration_seconds",
+]
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
 
@@ -54,7 +42,6 @@ STATUS_READER_MISSING = "READER_MISSING"
 STATUS_CONVERT_ERROR = "CONVERT_ERROR"
 STATUS_SOURCE_MISSING = "SOURCE_MISSING"
 STATUS_COLLISION = "COLLISION"
-STATUS_ROW_GONE = "ROW_GONE"
 
 # Optional reader packages phys2bids imports lazily per format. A missing one
 # is an environment problem, not a sign the file is not physiological data.
@@ -225,29 +212,12 @@ def _recording_label(stem: str, base: str, index: int) -> str:
     return f"rec{index + 1}"
 
 
-def _recording_of(rel_out: str, base_stem: str, index: int) -> str:
-    """Recover the ``recording-`` label of a prior multi-frequency output.
-
-    Proper-BIDS outputs embed it as ``recording-<label>_physio``; falls back
-    to re-deriving it from the stem if that pattern isn't found.
-    """
-    stem = Path(rel_out).name
-    if stem.endswith(".tsv.gz"):
-        stem = stem[: -len(".tsv.gz")]
-    m = re.search(rf"_recording-([A-Za-z0-9]+)_{_SUFFIX}$", stem)
-    if m:
-        return m.group(1)
-    if stem.endswith(f"_{_SUFFIX}"):
-        stem = stem[: -(len(_SUFFIX) + 1)]
-    return _recording_label(stem, base_stem, index)
-
-
 def _physio_basename(
     participant_id: str, session_id: str, entity_name: str, recording: str | None
 ) -> str:
     """Assemble the BIDS basename for a physio output paired with an mri scan.
 
-    ``entity_name`` is the associated mriscans.tsv row's ``rename`` (if set)
+    ``entity_name`` is the associated mriconvert_qc.tsv row's ``rename`` (if set)
     else ``bids_name`` — e.g. ``task-rest_bold``. Its trailing
     underscore-delimited suffix token is replaced with ``physio`` (e.g.
     ``task-rest_bold`` -> ``task-rest_physio``; a bare suffix like ``bold``
@@ -289,16 +259,16 @@ def _find_collisions(rows: list[dict[str, str]]) -> dict[str, list[str]]:
     return {k: v for k, v in by_physio.items() if len(v) > 1}
 
 
-def _read_physio_parent(mriscans_json: Path) -> Path | None:
-    """Read ``PhysioParent.Value`` from mriscans.json.
+def _read_physio_parent(mriconvert_qc_json: Path) -> Path | None:
+    """Read ``PhysioParent.Value`` from mriconvert_qc.json.
 
     Returns ``None`` if the file is absent/unreadable, the value is blank, or
     the path is not a directory on disk.
     """
-    if not mriscans_json.is_file():
+    if not mriconvert_qc_json.is_file():
         return None
     try:
-        with mriscans_json.open(encoding="utf-8") as f:
+        with mriconvert_qc_json.open(encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return None
@@ -401,16 +371,21 @@ def _place_converted(
     bids_root: Path,
     row: dict[str, str],
     base_stem: str,
+    claimed: dict[str, str],
 ) -> tuple[str, list[str], str | None]:
     """Move a completed conversion's staged output into the mri BIDS tree.
 
     Places each produced ``.tsv.gz``/``.json`` pair at
     ``_destination_dir(...)/_physio_basename(...).{tsv.gz,json}``, adding a
     ``recording-<label>`` entity for a multi-frequency phys2bids split.
-    Refuses to overwrite a destination already occupied by a file from a
-    different association (never overwrites). Returns
-    ``(status, written_relpaths, detail)``. The staging directory is removed
-    when done.
+
+    Every run reconverts from scratch, so a destination left over from an
+    earlier run of this same association is simply replaced. ``claimed``
+    tracks destinations already written by another association *this run*
+    (keyed by the owning row's ``filename``) so two distinct associations
+    can never overwrite each other, even if their computed names collide.
+    Returns ``(status, written_relpaths, detail)``. The staging directory is
+    removed when done.
     """
     try:
         produced = sorted(staging.glob("*.tsv.gz"))
@@ -423,6 +398,7 @@ def _place_converted(
         )
         dest_dir.mkdir(parents=True, exist_ok=True)
         entity_name = row["rename"].strip() or row["bids_name"].strip()
+        assoc_key = row["filename"]
 
         written: list[str] = []
         for index, tsv_src in enumerate(produced):
@@ -432,165 +408,40 @@ def _place_converted(
                 row["participant_id"], row["session_id"], entity_name, recording
             )
             dest_tsv = dest_dir / f"{basename}.tsv.gz"
-            if dest_tsv.exists():
+            dest_rel = dest_tsv.relative_to(bids_root).as_posix()
+
+            owner = claimed.get(dest_rel)
+            if owner is not None and owner != assoc_key:
                 return (
                     STATUS_CONVERT_ERROR,
                     [],
-                    "destination already occupied by a different file: "
-                    f"{dest_tsv.relative_to(bids_root).as_posix()}",
+                    "destination already occupied by a different association: "
+                    f"{dest_rel}",
                 )
+            if dest_tsv.exists():
+                dest_tsv.unlink()
+                dest_json = dest_tsv.with_name(dest_tsv.name[: -len(".tsv.gz")] + ".json")
+                if dest_json.is_file():
+                    dest_json.unlink()
+
+            claimed[dest_rel] = assoc_key
             written.append(_place_at_destination(tsv_src, dest_tsv, bids_root))
         return STATUS_CONVERTED, written, None
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _prune_empty_dirs(start: Path, stop: Path) -> None:
-    """Remove ``start`` and any empty parents up to (not including) ``stop``.
-
-    Called after a relocation so a now-emptied ``sub-X/ses-Y/<datatype>/``
-    directory does not linger once its files move elsewhere.
-    """
-    current = start
-    while current != stop and stop in current.parents:
-        try:
-            current.rmdir()  # succeeds only if the directory is empty
-        except OSError:
-            break
-        current = current.parent
-
-
-def _relocate_outputs(
-    prior_outputs: list[str],
-    bids_root: Path,
-    row: dict[str, str],
-    base_stem: str,
-) -> tuple[list[str], str | None]:
-    """Move a row's already-converted outputs to match its current
-    (possibly edited) association.
-
-    A file already correctly placed is left untouched; a target occupied by
-    a *different* file is skipped with a WARNING — nothing is ever
-    overwritten. Emptied source directories are pruned afterward. Returns
-    ``(new_relpaths, detail)``; an entry whose source file is gone keeps its
-    recorded path.
-    """
-    multi = len(prior_outputs) > 1
-    dest_dir = _destination_dir(
-        bids_root, row["participant_id"], row["session_id"], row["datatype"]
-    )
-    entity_name = row["rename"].strip() or row["bids_name"].strip()
-    new_rels: list[str] = []
-    old_parents: set[Path] = set()
-    moved = 0
-
-    for index, rel_out in enumerate(prior_outputs):
-        src_tsv = bids_root / rel_out
-        if not src_tsv.is_file():
-            new_rels.append(rel_out)
-            continue
-
-        recording = _recording_of(rel_out, base_stem, index) if multi else None
-        basename = _physio_basename(
-            row["participant_id"], row["session_id"], entity_name, recording
-        )
-        dest_tsv = dest_dir / f"{basename}.tsv.gz"
-
-        if dest_tsv.resolve() == src_tsv.resolve():
-            new_rels.append(rel_out)  # already satisfies the association
-            continue
-        if dest_tsv.exists():
-            print(
-                f"WARNING: cannot move {rel_out} -> "
-                f"{dest_tsv.relative_to(bids_root).as_posix()}: target already "
-                "exists; skipping (resolve the conflict and re-run)."
-            )
-            new_rels.append(rel_out)
-            continue
-
-        dest_tsv.parent.mkdir(parents=True, exist_ok=True)
-        src_json = src_tsv.with_name(src_tsv.name[: -len(".tsv.gz")] + ".json")
-        dest_json = dest_tsv.with_name(dest_tsv.name[: -len(".tsv.gz")] + ".json")
-        shutil.move(str(src_tsv), str(dest_tsv))
-        if src_json.is_file():
-            shutil.move(str(src_json), str(dest_json))
-        else:
-            print(f"WARNING: no JSON sidecar found for {rel_out}")
-        old_parents.add(src_tsv.parent)
-        new_rels.append(dest_tsv.relative_to(bids_root).as_posix())
-        moved += 1
-
-    for parent in old_parents:
-        _prune_empty_dirs(parent, bids_root)
-
-    detail = f"relocated {moved} file(s) to match association" if moved else None
-    return new_rels, detail
-
-
-def _read_existing_qc(qc_path: Path) -> dict[str, dict[str, str]]:
-    """Load an existing physioconvert_qc.tsv as full rows keyed by
-    ``filename``.
-
-    The whole row is kept so the QC block's edits (including intentional
-    blanks) are available when merging, and so an already-converted row's
-    metrics can be preserved verbatim when its conversion is skipped. Empty
-    when the file is absent.
-    """
-    if not qc_path.is_file():
-        return {}
-    existing: dict[str, dict[str, str]] = {}
-    with qc_path.open(newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        for row in reader:
-            filename = row.get("filename")
-            if filename:
-                existing[filename] = {k: (v if v is not None else "") for k, v in row.items()}
-    return existing
-
-
-def _resolve_qc_edits(filename: str, existing: dict[str, dict[str, str]]) -> dict[str, str]:
-    """Carry forward the user-owned QC columns from a prior row, verbatim
-    (blank if there is no prior row)."""
-    prior = existing.get(filename, {})
-    return {col: prior.get(col, "") for col in _QC_USER_COLUMNS}
-
-
-def _carry_row(
-    filename: str, physio: str, existing: dict[str, dict[str, str]], status: str
-) -> dict[str, str]:
-    """Build a QC row with blank metrics, preserving any prior QC edits.
-
-    Used for associations that were not (re)converted this run (COLLISION,
-    SOURCE_MISSING, NOT_PHYSIO, READER_MISSING, ROW_GONE).
-    """
-    row: dict[str, str] = {"filename": filename, "physio": physio, "status": status}
-    for col in (
-        "n_channels", "sampling_frequencies", "sample_count", "duration_seconds",
-        "output_files", "bids_name",
-    ):
-        row[col] = ""
-    row.update(_resolve_qc_edits(filename, existing))
-    return row
-
-
-def _bids_name_of(output_file: str, participant_id: str, session_id: str) -> str:
-    """The portion of an output file's basename after its
-    participant_id[_session_id]_ prefix and before ``.tsv.gz``."""
-    name = Path(output_file).name
-    if name.endswith(".tsv.gz"):
-        name = name[: -len(".tsv.gz")]
-    prefix = participant_id
-    if session_id:
-        prefix += f"_{session_id}"
-    prefix += "_"
-    return name[len(prefix):] if name.startswith(prefix) else name
-
-
-def _bids_names_of(output_files: list[str], row: dict[str, str]) -> str:
-    """Comma-separated ``bids_name`` values aligned with ``output_files``."""
-    return ",".join(
-        _bids_name_of(f, row["participant_id"], row["session_id"]) for f in output_files
-    )
+def _carry_row(physio: str, status: str) -> dict[str, str]:
+    """Build a QC row with blank metrics, for an association not (re)converted
+    this run (COLLISION, SOURCE_MISSING)."""
+    return {
+        "physio": physio,
+        "status": status,
+        "n_channels": "",
+        "sampling_frequencies": "",
+        "sample_count": "",
+        "duration_seconds": "",
+    }
 
 
 def _find_asset(name: str) -> Path | None:
@@ -608,7 +459,7 @@ def _find_asset(name: str) -> Path | None:
 def _write_qc_dict(bids_root: Path, physio_parent: Path | None) -> None:
     """Write physioconvert_qc.json from the static asset, injecting
     ``PhysioParent`` with this run's resolved value (mirroring mriconvert's
-    ``PhysioParent`` key in mriscans.json). Run once after all conversions.
+    ``PhysioParent`` key in mriconvert_qc.json). Run once after all conversions.
     A missing or unreadable asset is warned about, not fatal.
     """
     src = _find_asset(_QC_DICT_FILENAME)
@@ -632,8 +483,8 @@ def _write_qc_dict(bids_root: Path, physio_parent: Path | None) -> None:
 
 def _write_tsv(path: Path, rows: list[dict[str, str]], columns: list[str]) -> None:
     """Write a TSV with the given columns, one row per association, sorted
-    by ``filename``."""
-    rows = sorted(rows, key=lambda r: r["filename"])
+    by ``physio``."""
+    rows = sorted(rows, key=lambda r: r["physio"])
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=columns, delimiter="\t")
         writer.writeheader()
@@ -651,9 +502,9 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             "mriconvert first."
         )
 
-    mriscans_tsv = bids_root / "mriscans.tsv"
-    if not mriscans_tsv.is_file():
-        sys.exit(f"Error: {mriscans_tsv} not found; run xnatcli mriconvert first.")
+    mriconvert_qc_tsv = bids_root / "mriconvert_qc.tsv"
+    if not mriconvert_qc_tsv.is_file():
+        sys.exit(f"Error: {mriconvert_qc_tsv} not found; run xnatcli mriconvert first.")
 
     try:
         import phys2bids  # noqa: F401
@@ -665,20 +516,19 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             "Install it via 'uv sync' or 'pip install phys2bids'."
         )
 
-    # physioconvert only reads mriscans.tsv -- it never writes it back.
-    with mriscans_tsv.open(newline="", encoding="utf-8") as f:
+    # physioconvert only reads mriconvert_qc.tsv -- it never writes it back.
+    with mriconvert_qc_tsv.open(newline="", encoding="utf-8") as f:
         mri_rows = list(csv.DictReader(f, delimiter="\t"))
 
     in_scope = [r for r in mri_rows if (r.get("physio") or "").strip()]
     if not in_scope:
         print(
-            "No physio associations found in mriscans.tsv's 'physio' column; "
+            "No physio associations found in mriconvert_qc.tsv's 'physio' column; "
             "nothing to do."
         )
         return 0
 
     qc_path = bids_root / _QC_FILENAME
-    existing = _read_existing_qc(qc_path)
 
     log_path: Path | None = None
     if args.log:
@@ -697,98 +547,54 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         STATUS_CONVERT_ERROR: 0,
         STATUS_SOURCE_MISSING: 0,
         STATUS_COLLISION: 0,
-        STATUS_ROW_GONE: 0,
     }
     qc_rows: list[dict[str, str]] = []
-    handled: set[str] = set()
+    # Destinations already written by an association this run, keyed by
+    # relpath -> the writing row's filename; guards against two distinct
+    # associations computing the same output path.
+    claimed: dict[str, str] = {}
 
     # --- Collisions: the same raw physio basename referenced by more than
-    # one mriscans.tsv row. None of those rows are converted until resolved.
+    # one mriconvert_qc.tsv row. None of those rows are converted until resolved.
     collisions = _find_collisions(in_scope)
     for row in in_scope:
         physio = row["physio"].strip()
         if physio not in collisions:
             continue
         filename = row["filename"]
-        handled.add(filename)
         counts[STATUS_COLLISION] += 1
         print(f"{filename}: {STATUS_COLLISION} — physio {physio!r} referenced by multiple rows")
         log_writer.write(_logging_now(), filename, STATUS_COLLISION, physio, [])
-        qc_rows.append(_carry_row(filename, physio, existing, STATUS_COLLISION))
     for physio, filenames in collisions.items():
         print(
             f"WARNING: physio {physio!r} is referenced by {len(filenames)} "
-            f"mriscans.tsv rows ({', '.join(filenames)}); none will be "
+            f"mriconvert_qc.tsv rows ({', '.join(filenames)}); none will be "
             "converted until only one row references it."
         )
+        qc_rows.append(_carry_row(physio, STATUS_COLLISION))
 
     remaining = [r for r in in_scope if r["physio"].strip() not in collisions]
-    physio_parent = _read_physio_parent(bids_root / "mriscans.json")
+    physio_parent = _read_physio_parent(bids_root / "mriconvert_qc.json")
 
-    # --- Classify each remaining association: already converted (relocate
-    # or no-op), needs conversion, or blocked. ---
+    # --- Classify each remaining association: needs conversion, or blocked. ---
     to_convert: list[dict[str, str]] = []
     for row in remaining:
         filename = row["filename"]
         physio = row["physio"].strip()
-        handled.add(filename)
 
         if not row["participant_id"] or not row["datatype"]:
             counts[STATUS_SOURCE_MISSING] += 1
-            detail = "mriscans.tsv row has blank participant_id/datatype; cannot place physio output"
+            detail = "mriconvert_qc.tsv row has blank participant_id/datatype; cannot place physio output"
             print(f"{filename}: {STATUS_SOURCE_MISSING} — {detail}")
             log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
-            qc_rows.append(_carry_row(filename, physio, existing, STATUS_SOURCE_MISSING))
-            continue
-
-        prior = existing.get(filename)
-        prior_outputs = [
-            s.strip()
-            for s in (prior.get("output_files", "") if prior else "").split(",")
-            if s.strip()
-        ]
-        already_converted = (
-            prior is not None
-            and prior.get("status") == STATUS_CONVERTED
-            and prior.get("physio") == physio
-            and bool(prior_outputs)
-            and all((bids_root / o).is_file() for o in prior_outputs)
-        )
-
-        if already_converted:
-            base_stem = Path(physio).stem
-            new_rels, detail = _relocate_outputs(prior_outputs, bids_root, row, base_stem)
-            line = f"{filename}: {STATUS_CONVERTED}"
-            if detail:
-                line += f" — {detail}"
-            print(line)
-            log_writer.write(_logging_now(), filename, STATUS_CONVERTED, physio, new_rels)
-            counts[STATUS_CONVERTED] += 1
-            qc_rows.append({
-                "filename": filename,
-                "physio": physio,
-                "status": STATUS_CONVERTED,
-                "n_channels": prior.get("n_channels", ""),
-                "sampling_frequencies": prior.get("sampling_frequencies", ""),
-                "sample_count": prior.get("sample_count", ""),
-                "duration_seconds": prior.get("duration_seconds", ""),
-                "output_files": ",".join(new_rels),
-                "bids_name": _bids_names_of(new_rels, row),
-                **_resolve_qc_edits(filename, existing),
-            })
-            continue
-
-        if args.maps:
-            print(f"{filename}: no existing output to relocate; run without -m/--maps first")
-            if prior is not None:
-                qc_rows.append(_carry_row(filename, physio, existing, prior.get("status", "")))
+            qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
             continue
 
         if physio_parent is None:
             counts[STATUS_SOURCE_MISSING] += 1
-            print(f"{filename}: {STATUS_SOURCE_MISSING} — PhysioParent not set/found in mriscans.json")
+            print(f"{filename}: {STATUS_SOURCE_MISSING} — PhysioParent not set/found in mriconvert_qc.json")
             log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
-            qc_rows.append(_carry_row(filename, physio, existing, STATUS_SOURCE_MISSING))
+            qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
             continue
 
         raw_path = physio_parent / physio
@@ -796,7 +602,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             counts[STATUS_SOURCE_MISSING] += 1
             print(f"{filename}: {STATUS_SOURCE_MISSING} — {physio!r} not found under PhysioParent")
             log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
-            qc_rows.append(_carry_row(filename, physio, existing, STATUS_SOURCE_MISSING))
+            qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
             continue
 
         to_convert.append(row)
@@ -819,7 +625,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             counts[status] += 1
             print(f"{filename}: {status} — {result['err'] or 'no physio channels'}")
             log_writer.write(start, filename, status, physio, [])
-            qc_rows.append(_carry_row(filename, physio, existing, status))
+            qc_rows.append(_carry_row(physio, status))
             return
 
         if result["convert_error"] is not None:
@@ -827,7 +633,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         else:
             base_stem = Path(physio).stem
             status, written, detail = _place_converted(
-                Path(result["staging"]), bids_root, row, base_stem,
+                Path(result["staging"]), bids_root, row, base_stem, claimed,
             )
 
         counts[status] += 1
@@ -840,16 +646,12 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         log_writer.write(start, filename, status, physio, written)
 
         qc_rows.append({
-            "filename": filename,
             "physio": physio,
             "status": status,
             "n_channels": result["n_ch"],
             "sampling_frequencies": result["freqs"],
             "sample_count": result["sample_count"],
             "duration_seconds": result["duration_seconds"],
-            "output_files": ",".join(written),
-            "bids_name": _bids_names_of(written, row) if written else "",
-            **_resolve_qc_edits(filename, existing),
         })
 
     if args.nphysio <= 1:
@@ -871,17 +673,6 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
                     _finish(tasks_by_filename[tasks[next_index][0]], pending.pop(next_index))
                     next_index += 1
 
-    # Preserve QC rows whose mri association no longer exists (the mriscans.tsv
-    # row was deleted, or its physio column was blanked) so the user's edits
-    # are not lost.
-    for filename, prior in existing.items():
-        if filename in handled:
-            continue
-        counts[STATUS_ROW_GONE] += 1
-        print(f"{filename}: {STATUS_ROW_GONE} — no matching physio association in mriscans.tsv")
-        log_writer.write(_logging_now(), filename, STATUS_ROW_GONE, prior.get("physio", ""), [])
-        qc_rows.append(_carry_row(filename, prior.get("physio", ""), existing, STATUS_ROW_GONE))
-
     _write_tsv(qc_path, qc_rows, _QC_COLUMNS)
     _write_qc_dict(bids_root, physio_parent)
 
@@ -894,7 +685,6 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         STATUS_CONVERT_ERROR,
         STATUS_SOURCE_MISSING,
         STATUS_COLLISION,
-        STATUS_ROW_GONE,
     ):
         print(f"  {status}: {counts[status]}")
     print(f"{_QC_FILENAME} written to {qc_path}")
@@ -903,7 +693,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
     if counts[STATUS_COLLISION]:
         print(
             "Some physio associations were skipped because their raw file is "
-            "referenced by more than one mriscans.tsv row (status COLLISION). "
+            "referenced by more than one mriconvert_qc.tsv row (status COLLISION). "
             "Clear all but one row's physio column and re-run."
         )
     if counts[STATUS_SOURCE_MISSING]:

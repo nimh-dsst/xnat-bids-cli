@@ -259,8 +259,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional absolute path to the flat directory holding all raw "
         "physio recordings for this project. Recorded as the top-level "
-        "'PhysioParent' key in mriscans.json for xnatcli physioconvert to "
-        "resolve mriscans.tsv's 'physio' column against. If omitted, a "
+        "'PhysioParent' key in mriconvert_qc.json for xnatcli physioconvert to "
+        "resolve mriconvert_qc.tsv's 'physio' column against. If omitted, a "
         "PhysioParent recorded on a prior run is preserved.",
     )
     mriconvert_parser.add_argument(
@@ -311,8 +311,8 @@ def build_parser() -> argparse.ArgumentParser:
         "-m",
         "--maps",
         action="store_true",
-        help="Skip the dcm2bids conversion; only (re)generate mriscans.tsv (and "
-        "copy mriscans.json) for every project in scope from the already-converted "
+        help="Skip the dcm2bids conversion; only (re)generate mriconvert_qc.tsv (and "
+        "copy mriconvert_qc.json) for every project in scope from the already-converted "
         "BIDS data under OUTPUT_DIR. -c/--config, pydicom, dcm2bids, and "
         "dcm2niix are not required with this option.",
     )
@@ -320,7 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     physioconvert_parser = subparsers.add_parser(
         "physioconvert",
-        help="Convert physio recordings associated (via mriscans.tsv's "
+        help="Convert physio recordings associated (via mriconvert_qc.tsv's "
         "'physio' column) with an xnatcli mriconvert BIDS dataset, via "
         "phys2bids.",
     )
@@ -330,7 +330,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="OUTPUT_DIR",
         help="Same BIDS root xnatcli mriconvert wrote to (OUTPUT_DIR/PROJECT/ "
-        "must hold mriscans.tsv/mriscans.json). Physio outputs are written "
+        "must hold mriconvert_qc.tsv/mriconvert_qc.json). Physio outputs are written "
         "directly into OUTPUT_DIR/PROJECT/sub-X/ses-Y/<datatype>/ alongside "
         "the associated .nii.gz.",
     )
@@ -357,14 +357,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write a per-file log CSV to "
         "OUTPUT_DIR/PROJECT/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv.",
-    )
-    physioconvert_parser.add_argument(
-        "-m",
-        "--maps",
-        action="store_true",
-        help="Skip the phys2bids conversion; only relocate already-converted "
-        "physio outputs to match edited rename/physio columns and refresh "
-        "physioconvert_qc.tsv.",
     )
     physioconvert_parser.set_defaults(func=physioconvert_cmd)
 
@@ -395,7 +387,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         metavar="OUTPUT_DIR",
         help="When provided, apply all renames from PROJECT-<PROJECT>_bidsmap.tsv "
-        "(participant_rename, session_rename) — and mriscans.tsv's own rename "
+        "(participant_rename, session_rename) — and mriconvert_qc.tsv's own rename "
         "column — by recursively copying the BIDS dataset to OUTPUT_DIR/PROJECT/ "
         "with every rename applied. The map TSV generation always runs first "
         "regardless. OUTPUT_DIR/PROJECT/ must not already exist. Skips "

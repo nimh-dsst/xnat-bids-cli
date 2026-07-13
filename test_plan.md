@@ -106,27 +106,27 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] `-d/--delete` with `-a/--archive` deletes the session's input directory after a successful archive, regardless of conversion status
 - [ ] `-d/--delete` also removes empty `SUBJECT` and `PROJECT` parent directories
 - [ ] `-d/--delete` deletion happens after the log row for that session is written (verify the log still shows the pre-deletion result)
-- [ ] After a run, `OUTPUT_DIR/PROJECT/mriscans.tsv` and `OUTPUT_DIR/PROJECT/mriscans.json` are (re)written
-- [ ] `mriscans.tsv` columns match the documented order and content (`filename`, `acq_time`, `series_number`, `dimensions`, `size_bytes`, `participant_id`, `session_id`, `datatype`, `suffix`, `bids_name`, plus blank reviewer columns `rename`, `physio`, `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, `qc_notes`)
-- [ ] Re-running `mriconvert` (adding a new session) merges into the existing `mriscans.tsv` by `filename`: prior rows (including any hand-filled reviewer columns) are kept as-is, and the new session's rows are appended with blank reviewer columns
+- [ ] After a run, `OUTPUT_DIR/PROJECT/mriconvert_qc.tsv` and `OUTPUT_DIR/PROJECT/mriconvert_qc.json` are (re)written
+- [ ] `mriconvert_qc.tsv` columns match the documented order and content (`filename`, `acq_time`, `series_number`, `dimensions`, `size_bytes`, `participant_id`, `session_id`, `datatype`, `suffix`, `bids_name`, plus blank reviewer columns `rename`, `physio`, `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, `qc_notes`)
+- [ ] Re-running `mriconvert` (adding a new session) merges into the existing `mriconvert_qc.tsv` by `filename`: prior rows (including any hand-filled reviewer columns) are kept as-is, and the new session's rows are appended with blank reviewer columns
 - [ ] Hand-editing a reviewer column (e.g. `rename`) on an existing row survives a subsequent `mriconvert` re-run
 - [ ] Manually changing a generator-owned field on disk (e.g. renaming a `.nii.gz`) and re-running triggers a `WARNING` per deviation, printed to stdout and logged to `OUTPUT_DIR/log/scans_deviations_<PROJECT>_<YYYYMMDD_HHMMSS>.log`
-- [ ] A `mriscans.tsv` row whose file no longer exists on disk is preserved (not dropped), and the end-of-run summary reports the total count of such preserved rows across all projects in scope
-- [ ] `-m/--maps` (without `dcm2bids`/`dcm2niix`/`pydicom`/`-c` available) still succeeds by only regenerating `mriscans.tsv`/`mriscans.json` from already-converted BIDS data
-- [ ] `-y/--physio PHYSIO_PARENT_DIR` records `PhysioParent` in `mriscans.json`
+- [ ] A `mriconvert_qc.tsv` row whose file no longer exists on disk is preserved (not dropped), and the end-of-run summary reports the total count of such preserved rows across all projects in scope
+- [ ] `-m/--maps` (without `dcm2bids`/`dcm2niix`/`pydicom`/`-c` available) still succeeds by only regenerating `mriconvert_qc.tsv`/`mriconvert_qc.json` from already-converted BIDS data
+- [ ] `-y/--physio PHYSIO_PARENT_DIR` records `PhysioParent` in `mriconvert_qc.json`
 - [ ] Omitting `-y/--physio` on a subsequent run preserves a `PhysioParent` recorded by a prior run
 - [ ] Combine `-p`, `-n`, `-l`, `-a`, `-d`, `-y` together in one invocation and verify all behaviors hold simultaneously
 - [ ] Omitting `-i/--input` or `-o/--output` fails with an argparse "required" error
 
 ## xnatcli physioconvert
 
-- [ ] Running before `xnatcli mriconvert` has produced `OUTPUT_DIR/PROJECT/mriscans.tsv` exits with a clear error
+- [ ] Running before `xnatcli mriconvert` has produced `OUTPUT_DIR/PROJECT/mriconvert_qc.tsv` exits with a clear error
 - [ ] Running with `phys2bids` unavailable exits with a clear error
-- [ ] With every `mriscans.tsv` `physio` column blank, the run completes with zero associations processed
+- [ ] With every `mriconvert_qc.tsv` `physio` column blank, the run completes with zero associations processed
 - [ ] Filling in one row's `physio` column with a valid recording basename under `PhysioParent` converts it, writing `_physio.tsv.gz`/`.json` next to the paired `.nii.gz`, and reports `STATUS=CONVERTED`
 - [ ] The output physio basename is derived from `rename` (if set) else `bids_name`, with the trailing suffix token replaced by `physio`
-- [ ] Two `mriscans.tsv` rows referencing the same `physio` basename both report `STATUS=COLLISION`, print one `WARNING` listing both rows, and neither converts; clearing all but one and re-running resolves it
-- [ ] A `physio` value with no `PhysioParent` set in `mriscans.json` reports `STATUS=SOURCE_MISSING`
+- [ ] Two `mriconvert_qc.tsv` rows referencing the same `physio` basename both report `STATUS=COLLISION`, print one `WARNING` listing both rows, and neither converts; clearing all but one and re-running resolves it
+- [ ] A `physio` value with no `PhysioParent` set in `mriconvert_qc.json` reports `STATUS=SOURCE_MISSING`
 - [ ] A `physio` value not found under `PhysioParent` reports `STATUS=SOURCE_MISSING`
 - [ ] A `physio` value pointing at a non-physiological file (e.g. a stray `.txt`) reports `STATUS=NOT_PHYSIO`
 - [ ] A `physio` value pointing at a format whose optional reader package is not installed reports `STATUS=READER_MISSING`
@@ -136,7 +136,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Editing a converted row's `rename`/`participant_id`/`session_id`/`datatype` and re-running relocates/renames the existing output to match, without re-invoking `phys2bids`
 - [ ] Editing a converted row's `physio` to a different raw file converts the new file fresh and leaves the old output in place untouched
 - [ ] A computed destination already occupied by a file from a different association reports `STATUS=CONVERT_ERROR` and does not overwrite it
-- [ ] Deleting/blanking a row's association in `mriscans.tsv` and re-running marks the corresponding `physioconvert_qc.tsv` row `STATUS=ROW_GONE` while preserving any prior QC review fields
+- [ ] Deleting/blanking a row's association in `mriconvert_qc.tsv` and re-running marks the corresponding `physioconvert_qc.tsv` row `STATUS=ROW_GONE` while preserving any prior QC review fields
 - [ ] Hand-filled QC review columns (`recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, `qc_notes`) in `physioconvert_qc.tsv` survive subsequent runs
 - [ ] `-n/--nphysio 4` converts multiple associations in parallel processes, and `physioconvert_qc.tsv`/log rows still land in deterministic sorted-`filename` order matching a `-n 1` run
 - [ ] `-l/--log` writes `OUTPUT_DIR/PROJECT/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,STATUS,MRI_FILENAME,PHYSIO_SOURCE,DESTINATION_PATH`, one row per output (or one blank-`DESTINATION_PATH` row for an association with no output)
@@ -152,13 +152,13 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] For a dataset that uses sessions but one participant lacks any `ses-*` directory, that participant is skipped with a warning
 - [ ] Re-running map generation after adding a new participant/session appends the new `(participant_id, session_id)` rows while preserving previously filled-in `*_rename` values
 - [ ] Filling in `participant_rename`/`session_rename` values, then running with `-o OUTPUT_DIR`, renames the corresponding `sub-*`/`ses-*` directories and embedded filename labels in the copy; blank values keep the original label
-- [ ] Filling in a `mriscans.tsv` row's `rename` column, then `-o`, renames that file's `bids_name` (and matching `.json`/`.bval`/`.bvec` sidecars) in the copy; blank `rename` keeps the original `bids_name`
+- [ ] Filling in a `mriconvert_qc.tsv` row's `rename` column, then `-o`, renames that file's `bids_name` (and matching `.json`/`.bval`/`.bvec` sidecars) in the copy; blank `rename` keeps the original `bids_name`
 - [ ] A row with `recommend_for_use`, `complete`, or `usable` exactly `"FALSE"` is excluded from the copy (file, sidecars, and manifest row all omitted)
 - [ ] A row with `qc_rating` exactly `"FAIL"` or `"UNCERTAIN"` is excluded from the copy
 - [ ] A QC column with a near-miss value (e.g. `"false"` instead of `"FALSE"`) is **not** filtered and prints a warning about the invalid Level
-- [ ] `-o OUTPUT_DIR` on a first run requires `OUTPUT_DIR/PROJECT/` not to already exist, and produces `participants.tsv` and `scans.tsv` (promoted from `mriscans.tsv`) reflecting all renames
+- [ ] `-o OUTPUT_DIR` on a first run requires `OUTPUT_DIR/PROJECT/` not to already exist, and produces `participants.tsv` and `scans.tsv` (promoted from `mriconvert_qc.tsv`) reflecting all renames
 - [ ] `scans.tsv` in the output drops the `rename` and `physio` columns while preserving other reviewer columns
-- [ ] `mriscans.tsv`/`mriscans.json` and `physioconvert_qc.tsv`/`.json` are **not** copied into `OUTPUT_DIR/PROJECT/`
+- [ ] `mriconvert_qc.tsv`/`mriconvert_qc.json` and `physioconvert_qc.tsv`/`.json` are **not** copied into `OUTPUT_DIR/PROJECT/`
 - [ ] `tmp_dcm2bids` and `log` scratch directories are skipped in the copy
 - [ ] Re-running `-o` against an existing `OUTPUT_DIR/PROJECT/` only copies files not already present at their destination (incremental); root-level manifests are always re-written
 - [ ] Adding new files into an already-mapped `sub-*/[ses-*/]` directory and re-running `-o` prints a loud warning that the session was already mapped
