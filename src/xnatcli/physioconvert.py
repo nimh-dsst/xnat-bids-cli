@@ -31,16 +31,22 @@ _QC_USER_COLUMNS = (
     "rating_reason",
     "qc_notes",
 )
-# physioconvert_qc.tsv holds: the mri row this conversion is keyed to and the
-# physio basename used, the regenerated status/metrics/output path(s) and
-# bids_name, and the user-owned QC block.
+# physioconvert_qc.tsv holds: the physio basename used and the regenerated
+# status/metrics, the user-owned QC block, and — last — the mri row this
+# conversion is keyed to and the regenerated output path(s)/bids_name.
 _QC_COLUMNS = (
-    ["filename", "physio", "status", "n_channels", "sampling_frequencies",
-     "sample_count", "duration_seconds", "output_files", "bids_name"]
+    ["physio", "status", "n_channels", "sampling_frequencies",
+     "sample_count", "duration_seconds"]
     + list(_QC_USER_COLUMNS)
+    + ["filename", "output_files", "bids_name"]
 )
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]")
+
+# A physio recording captures the whole run, not one echo of a multi-echo
+# scan, so an ``echo-<N>`` entity inherited from the paired scan's bids_name
+# must not carry over into the physio output's filename.
+_ECHO_ENTITY = re.compile(r"_echo-\d+")
 
 STATUS_CONVERTED = "CONVERTED"
 STATUS_NOT_PHYSIO = "NOT_PHYSIO"
@@ -247,8 +253,11 @@ def _physio_basename(
     ``task-rest_bold`` -> ``task-rest_physio``; a bare suffix like ``bold``
     with no other tokens yields just ``physio``), with an optional
     ``recording-<label>`` entity inserted just before it for a
-    multi-frequency phys2bids split.
+    multi-frequency phys2bids split. Any ``echo-<N>`` entity is dropped
+    first: a physio recording aligns with every echo of a multi-echo scan,
+    not just the one row it happened to be associated with.
     """
+    entity_name = _ECHO_ENTITY.sub("", entity_name)
     prefix = entity_name.rsplit("_", 1)[0] if "_" in entity_name else ""
     parts = [participant_id]
     if session_id:
@@ -596,16 +605,29 @@ def _find_asset(name: str) -> Path | None:
     return None
 
 
-def _copy_data_dictionary(bids_root: Path) -> None:
-    """Copy the physioconvert_qc.json data dictionary next to
-    physioconvert_qc.tsv. Run once after all conversions. A missing asset is
-    warned about, not fatal.
+def _write_qc_dict(bids_root: Path, physio_parent: Path | None) -> None:
+    """Write physioconvert_qc.json from the static asset, injecting
+    ``PhysioParent`` with this run's resolved value (mirroring mriconvert's
+    ``PhysioParent`` key in mriscans.json). Run once after all conversions.
+    A missing or unreadable asset is warned about, not fatal.
     """
     src = _find_asset(_QC_DICT_FILENAME)
     if src is None:
         print(f"WARNING: {_QC_DICT_FILENAME} data dictionary not found; skipping its copy.")
-    else:
-        shutil.copyfile(src, bids_root / _QC_DICT_FILENAME)
+        return
+    try:
+        with src.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        print(f"WARNING: could not read {src}: {exc}; skipping its copy.")
+        return
+
+    data.setdefault("PhysioParent", {})["Value"] = str(physio_parent) if physio_parent else ""
+
+    dest = bids_root / _QC_DICT_FILENAME
+    with dest.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+        f.write("\n")
 
 
 def _write_tsv(path: Path, rows: list[dict[str, str]], columns: list[str]) -> None:
@@ -861,7 +883,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         qc_rows.append(_carry_row(filename, prior.get("physio", ""), existing, STATUS_ROW_GONE))
 
     _write_tsv(qc_path, qc_rows, _QC_COLUMNS)
-    _copy_data_dictionary(bids_root)
+    _write_qc_dict(bids_root, physio_parent)
 
     total = sum(counts.values())
     print(f"\nProcessed {total} physio association(s):")
