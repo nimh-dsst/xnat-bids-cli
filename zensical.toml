@@ -1,0 +1,55 @@
+[project]
+
+site_name = "XNAT CLI for BIDS"
+site_description = "A command-line interface for logging into an XNAT server, querying experiments and downloading files, then converting to the BIDS standard format."
+site_author = "NIMH Data Science and Sharing Team"
+site_url = "https://xnatbidscli.readthedocs.io/"
+
+copyright = """
+Copyright &copy; 2026 NIMH Data Science and Sharing Team
+"""
+
+nav = [
+  { "Overview" = "index.md" },
+  { "Installation" = "installation.md" },
+  { "Design" = "design.md" },
+  { "CLI Reference" = [
+      { "xnatcli login" = "cli/login.md" },
+      { "xnatcli query" = "cli/query.md" },
+      { "xnatcli download" = "cli/download.md" },
+      { "xnatcli mriconfig" = "cli/mriconfig.md" },
+      { "xnatcli mriconvert" = "cli/mriconvert.md" },
+      { "xnatcli cubids" = "cli/cubids.md" },
+      { "xnatcli bidsmap" = "cli/bidsmap.md" },
+      { "xnatcli physioconvert" = "cli/physioconvert.md" },
+    ] },
+]
+
+[project.theme]
+
+language = "en"
+
+features = [
+    "content.code.annotate",
+    "content.code.copy",
+    "navigation.footer",
+    "navigation.indexes",
+    "navigation.sections",
+    "navigation.top",
+    "navigation.tracking",
+    "search.highlight",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/nimh-dsst/xnat-bids-cli"
