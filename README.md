@@ -21,7 +21,7 @@ See the [Installation guide](https://xnatbidscli.readthedocs.io/installation/) f
 
 ## Attribution
 
-Developed by the [NIMH Data Science and Sharing Team](https://github.com/nimh-dsst).
+Developed and tested primarily by [Eric Earl](https://github.com/ericearl) of the [NIMH Data Science and Sharing Team](https://github.com/nimh-dsst) primarily for the NIMH Intramural Research Program labs. Claude Code and GitHub Copilot were used to develop features, docs, and modifications, as prompted by Eric Earl.
 
 ## License
 
