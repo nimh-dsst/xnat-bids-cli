@@ -665,7 +665,7 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
     if args.log:
         while True:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_path = output_dir / project / "log" / f"mriconvert_{ts}_log.csv"
+            log_path = output_dir / "log" / f"mriconvert_{ts}_log.csv"
             if not log_path.exists():
                 break
             time.sleep(1)

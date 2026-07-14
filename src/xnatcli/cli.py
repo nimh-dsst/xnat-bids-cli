@@ -171,7 +171,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--log",
         action="store_true",
         help="Write a per-experiment log CSV to "
-        "OUTPUT_DIR/PROJECT/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv.",
+        "OUTPUT_DIR/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv.",
     )
     mriconfig_parser.add_argument(
         "-d",
@@ -278,7 +278,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--log",
         action="store_true",
         help="Write a per-session log CSV to "
-        "OUTPUT_DIR/PROJECT/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv.",
+        "OUTPUT_DIR/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv.",
     )
     mriconvert_parser.add_argument(
         "-a",

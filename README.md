@@ -182,7 +182,7 @@ Per-experiment helper output is uniformly nested under `<target>/tmp_dcm2bids/he
 
 Exit code is `0` if every processed experiment is `COMPLETE`, and `1` otherwise. Both config drafts are attempted regardless.
 
-With `-l/--log`, a CSV identical in shape to `download`'s and `mriconvert`'s logs (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `OUTPUT_DIR/PROJECT/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start) — the same `PROJECT/log/` directory used by `mriconvert`. One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
+With `-l/--log`, a CSV identical in shape to `download`'s and `mriconvert`'s logs (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `OUTPUT_DIR/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start) — the same `log/` directory used by `mriconvert`. One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
 
 With `-d/--delete`, every `*.nii.gz` file in each experiment's helper subdir (`OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/tmp_dcm2bids/helper/<EXPERIMENT>/`) is removed right after `dcm2bids_helper` returns for that experiment, regardless of STATUS. JSON sidecars are kept — the project-level config draft only needs the JSONs, and the NIfTI images are typically far larger. The per-experiment status line gets a trailing `(removed N .nii.gz)` so the deletion is visible. Use this when you only need the drafted config and not the helper-stage NIfTIs.
 
@@ -194,7 +194,7 @@ With `-d/--delete`, every `*.nii.gz` file in each experiment's helper subdir (`O
 | `-p`, `--project PROJECT` | Run helper on every experiment of every subject in a project. |
 | `-o`, `--output` | **Required.** Directory under which `PROJECT-<PROJECT>_mriconfig/` is created (the parent directory is created if missing). |
 | `-n`, `--nprep` | *Optional.* Number of parallel dcm2bids_helper invocations, one per experiment per worker (default `1`). |
-| `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/PROJECT/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv`. |
+| `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv`. |
 | `-d`, `--delete` | *Optional.* After each experiment's helper run, delete `*.nii.gz` from its `tmp_dcm2bids/helper/<EXPERIMENT>/` subdir. JSON sidecars are kept. |
 | `-m`, `--maps` | *Optional.* Skip running `dcm2bids_helper` and only (re)draft the config from the helper JSON sidecars already under `OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/`. `dcm2bids_helper`/`dcm2niix` are not required. |
 
@@ -212,7 +212,7 @@ Converts XNAT-downloaded sessions to BIDS via [`Dcm2Bids`](https://unfmontreal.g
    - Derives the BIDS labels from the directory names: `PARTICIPANT` is the `SUBJECT` directory name with non-`[A-Za-z0-9]` characters stripped, `SESSION` is the `EXPERIMENT` directory name similarly stripped (case preserved). Because `xnatcli download` writes labels (not XNAT IDs) for these directories, the resulting BIDS labels are derived from human-readable identifiers.
    - If `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/` already has contents, prints a `WARNING:` line; the conversion proceeds with `--clobber`.
    - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT --clobber`.
-4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `<output>/PROJECT/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv` — the same `PROJECT/log/` directory used by `mriconfig`.
+4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `<output>/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv` — the same `log/` directory used by `mriconfig`.
 5. With `-d/--delete`, after a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT` is removed (via `shutil.rmtree`). The `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result. `FAILURE` and `NONEXISTENT` sessions are left untouched. Deletion happens after the per-session log row is written, so the log still records what was converted before removal.
 6. After all sessions are processed, a dataset-wide `mriconvert_qc.tsv` is (re)written at `<output>/PROJECT-<PROJECT>_mriconvert_qc.tsv`, and the static data dictionary [`src/assets/mriconvert_qc.json`](src/assets/mriconvert_qc.json) is copied alongside it as `<output>/PROJECT-<PROJECT>_mriconvert_qc.json`. See [`mriconvert_qc.tsv`](#mriconvert_qctsv) below.
 
@@ -247,7 +247,7 @@ Exit code is `0` if every processed session is `COMPLETE` or `EMPTY`, and `1` ot
 | `-o`, `--output` | **Required.** Directory under which `PROJECT/sub-X/ses-Y/` is written. |
 | `-c`, `--config` | **Required** unless `-m/--maps` is given. Path to the `dcm2bids` config JSON (typically the one drafted by `xnatcli mriconfig`). Recorded as the top-level `Dcm2BidsConfigPath` key in `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.json`. If omitted, a `Dcm2BidsConfigPath` recorded on a prior run is preserved. |
 | `-n`, `--nconvert` | *Optional.* Number of parallel session conversions (default `1`). |
-| `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/PROJECT/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv`. |
+| `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv`. |
 | `-d`, `--delete` | *Optional.* After a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, delete its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT`. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |
 | `-m`, `--maps` | *Optional.* Skip the `dcm2bids` conversion and only (re)generate `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.tsv` (and copy `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.json`) for every project in scope from the already-converted BIDS data under `OUTPUT_DIR`. `-c/--config`, `pydicom`, `dcm2bids`, and `dcm2niix` are not required. |
 | `-y`, `--physio` | *Optional.* Absolute path to the flat directory holding all raw physio recordings for this project. Recorded as the top-level `PhysioParent` key in `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.json` for [`xnatcli physioconvert`](#xnatcli-physioconvert) to resolve `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.tsv`'s `physio` column against. If omitted, a `PhysioParent` recorded on a prior run is preserved. |
