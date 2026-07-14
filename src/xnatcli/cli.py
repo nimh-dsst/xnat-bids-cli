@@ -191,16 +191,6 @@ def build_parser() -> argparse.ArgumentParser:
         "OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/. dcm2bids_helper and dcm2niix "
         "are not required with this option.",
     )
-    mriconfig_parser.add_argument(
-        "-b",
-        "--blank",
-        action="store_true",
-        help="Also draft a bare-bones dcm2bids config with blank datatype/suffix/"
-        "custom_entities, one entry per unique SeriesDescription (falling back to "
-        "ProtocolName or filename) across the dcm2bids_helper JSON sidecars. "
-        "Written separately as OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/"
-        "dcm2bids_config_blank_<YYYYMMDD_HHMMSS>.json.",
-    )
     mriconfig_parser.set_defaults(func=mriconfig_cmd)
 
     mriconvert_parser = subparsers.add_parser(
@@ -259,16 +249,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional absolute path to the flat directory holding all raw "
         "physio recordings for this project. Recorded as the top-level "
-        "'PhysioParent' key in mriconvert_qc.json for xnatcli physioconvert to "
-        "resolve mriconvert_qc.tsv's 'physio' column against. If omitted, a "
-        "PhysioParent recorded on a prior run is preserved.",
+        "'PhysioParent' key in OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.json for "
+        "xnatcli physioconvert to resolve OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.tsv's "
+        "'physio' column against. If omitted, a PhysioParent recorded on a "
+        "prior run is preserved.",
     )
     mriconvert_parser.add_argument(
         "-c",
         "--config",
         metavar="CONFIG_FILE",
         help="Path to the dcm2bids config JSON to use (e.g., the one drafted "
-        "by `xnatcli mriconfig`). Required unless -m/--maps is given.",
+        "by `xnatcli mriconfig`). Required unless -m/--maps is given. "
+        "Recorded as the top-level 'Dcm2BidsConfigPath' key in "
+        "OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.json. If omitted (only "
+        "possible with -m/--maps), a Dcm2BidsConfigPath recorded on a prior "
+        "run is preserved.",
     )
     mriconvert_parser.add_argument(
         "-n",
@@ -311,10 +306,11 @@ def build_parser() -> argparse.ArgumentParser:
         "-m",
         "--maps",
         action="store_true",
-        help="Skip the dcm2bids conversion; only (re)generate mriconvert_qc.tsv (and "
-        "copy mriconvert_qc.json) for every project in scope from the already-converted "
-        "BIDS data under OUTPUT_DIR. -c/--config, pydicom, dcm2bids, and "
-        "dcm2niix are not required with this option.",
+        help="Skip the dcm2bids conversion; only (re)generate "
+        "OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.tsv (and copy "
+        "OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.json) for every project in scope from "
+        "the already-converted BIDS data under OUTPUT_DIR. -c/--config, pydicom, "
+        "dcm2bids, and dcm2niix are not required with this option.",
     )
     mriconvert_parser.set_defaults(func=mriconvert_cmd)
 
@@ -329,10 +325,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         required=True,
         metavar="OUTPUT_DIR",
-        help="Same BIDS root xnatcli mriconvert wrote to (OUTPUT_DIR/PROJECT/ "
-        "must hold mriconvert_qc.tsv/mriconvert_qc.json). Physio outputs are written "
-        "directly into OUTPUT_DIR/PROJECT/sub-X/ses-Y/<datatype>/ alongside "
-        "the associated .nii.gz.",
+        help="Same BIDS root xnatcli mriconvert wrote to (OUTPUT_DIR must hold "
+        "PROJECT-<P>_mriconvert_qc.tsv/PROJECT-<P>_mriconvert_qc.json). Physio "
+        "outputs are written directly into "
+        "OUTPUT_DIR/PROJECT/sub-X/ses-Y/<datatype>/ alongside the associated "
+        ".nii.gz.",
     )
     physioconvert_parser.add_argument(
         "-p",
@@ -356,7 +353,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--log",
         action="store_true",
         help="Write a per-file log CSV to "
-        "OUTPUT_DIR/PROJECT/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv.",
+        "OUTPUT_DIR/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv, and mirror "
+        "everything printed to stdout/stderr into a companion text log at "
+        "OUTPUT_DIR/log/physioconvert_<YYYYMMDD_HHMMSS>_log.txt.",
     )
     physioconvert_parser.set_defaults(func=physioconvert_cmd)
 

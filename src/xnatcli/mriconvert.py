@@ -329,14 +329,32 @@ def _find_scans_json() -> Path | None:
     return None
 
 
-def _write_scans_json(bids_root: Path, physio_parent: Path | None) -> None:
-    """Write mriconvert_qc.json from the static asset, injecting ``PhysioParent``.
+def _qc_tsv_path(bids_root: Path) -> Path:
+    """``OUTPUT_DIR/PROJECT-<PROJECT_ID>_mriconvert_qc.tsv`` for ``bids_root``
+    (``OUTPUT_DIR/PROJECT_ID``)."""
+    return bids_root.parent / f"PROJECT-{bids_root.name}_mriconvert_qc.tsv"
+
+
+def _qc_json_path(bids_root: Path) -> Path:
+    """``OUTPUT_DIR/PROJECT-<PROJECT_ID>_mriconvert_qc.json`` for ``bids_root``
+    (``OUTPUT_DIR/PROJECT_ID``)."""
+    return bids_root.parent / f"PROJECT-{bids_root.name}_mriconvert_qc.json"
+
+
+def _write_scans_json(
+    bids_root: Path,
+    physio_parent: Path | None,
+    dcm2bids_config: Path | None = None,
+) -> None:
+    """Write mriconvert_qc.json from the static asset, injecting
+    ``PhysioParent`` and ``Dcm2BidsConfigPath``.
 
     Loads the static data dictionary (never mutated in place) and sets
-    ``PhysioParent.Value`` to ``physio_parent`` when given. When
-    ``physio_parent`` is None, preserves whatever ``PhysioParent.Value`` was
-    already recorded in the destination mriconvert_qc.json from a prior run, if
-    any, so omitting ``-y`` on a rerun doesn't erase it.
+    ``PhysioParent.Value``/``Dcm2BidsConfigPath.Value`` to ``physio_parent``/
+    ``dcm2bids_config`` when given. When either is None, preserves whatever
+    value was already recorded for it in the destination mriconvert_qc.json
+    from a prior run, if any, so omitting ``-y``/``-c`` on a rerun (e.g. under
+    ``-m/--maps``) doesn't erase it.
     """
     src_json = _find_scans_json()
     if src_json is None:
@@ -352,18 +370,28 @@ def _write_scans_json(bids_root: Path, physio_parent: Path | None) -> None:
         _safe_print(f"WARNING: could not read {src_json}: {exc}; skipping the sidecar write.")
         return
 
-    dest_json = bids_root / "mriconvert_qc.json"
-    if physio_parent is not None:
-        data.setdefault("PhysioParent", {})["Value"] = str(physio_parent)
-    elif dest_json.is_file():
+    dest_json = _qc_json_path(bids_root)
+    prior: dict | None = None
+    if (physio_parent is None or dcm2bids_config is None) and dest_json.is_file():
         try:
             with dest_json.open(encoding="utf-8") as f:
                 prior = json.load(f)
-            prior_value = prior.get("PhysioParent", {}).get("Value", "")
-            if prior_value:
-                data.setdefault("PhysioParent", {})["Value"] = prior_value
         except (OSError, ValueError):
-            pass
+            prior = None
+
+    if physio_parent is not None:
+        data.setdefault("PhysioParent", {})["Value"] = str(physio_parent)
+    elif prior is not None:
+        prior_value = prior.get("PhysioParent", {}).get("Value", "")
+        if prior_value:
+            data.setdefault("PhysioParent", {})["Value"] = prior_value
+
+    if dcm2bids_config is not None:
+        data.setdefault("Dcm2BidsConfigPath", {})["Value"] = str(dcm2bids_config)
+    elif prior is not None:
+        prior_value = prior.get("Dcm2BidsConfigPath", {}).get("Value", "")
+        if prior_value:
+            data.setdefault("Dcm2BidsConfigPath", {})["Value"] = prior_value
 
     with dest_json.open("w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
@@ -454,8 +482,13 @@ def _report_scans_deviations(
     )
 
 
-def _generate_scans_tsv(bids_root: Path, physio_parent: Path | None = None) -> int:
-    """Write <bids_root>/mriconvert_qc.tsv from every .nii.gz under the dataset.
+def _generate_scans_tsv(
+    bids_root: Path,
+    physio_parent: Path | None = None,
+    dcm2bids_config: Path | None = None,
+) -> int:
+    """Write <output_dir>/PROJECT-<bids_root.name>_mriconvert_qc.tsv from
+    every .nii.gz under the dataset.
 
     Walks bids_root with os.walk (skipping the dcm2bids ``tmp_dcm2bids``
     scratch directory) and emits one row per .nii.gz, then writes the
@@ -469,9 +502,10 @@ def _generate_scans_tsv(bids_root: Path, physio_parent: Path | None = None) -> i
     converted at different times, appending to mriconvert_qc.tsv without
     disturbing already-reviewed rows.
 
-    ``physio_parent``, when given, is recorded as the ``PhysioParent`` value
-    in mriconvert_qc.json; when omitted, a value already recorded there is
-    preserved (see ``_write_scans_json``).
+    ``physio_parent`` and ``dcm2bids_config``, when given, are recorded as the
+    ``PhysioParent``/``Dcm2BidsConfigPath`` values in mriconvert_qc.json;
+    when omitted, a value already recorded there is preserved (see
+    ``_write_scans_json``).
 
     Returns the number of preserved rows whose file is no longer found on
     disk, for the caller to fold into an end-of-run summary.
@@ -479,7 +513,7 @@ def _generate_scans_tsv(bids_root: Path, physio_parent: Path | None = None) -> i
     if not bids_root.is_dir():
         return 0
 
-    tsv_path = bids_root / "mriconvert_qc.tsv"
+    tsv_path = _qc_tsv_path(bids_root)
 
     try:
         import nibabel as nib
@@ -552,7 +586,7 @@ def _generate_scans_tsv(bids_root: Path, physio_parent: Path | None = None) -> i
             "added; existing rows preserved)"
         )
 
-    _write_scans_json(bids_root, physio_parent)
+    _write_scans_json(bids_root, physio_parent, dcm2bids_config)
 
     return missing_count
 
@@ -571,6 +605,8 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
     if physio_parent is not None and not physio_parent.is_dir():
         _safe_print(f"WARNING: -y/--physio directory not found: {physio_parent}")
 
+    dcm2bids_config = Path(args.config).resolve() if args.config else None
+
     # --maps: skip the dcm2bids conversion entirely and only (re)generate the
     # mriconvert_qc.tsv/mriconvert_qc.json tabular outputs for every project in scope from the
     # already-converted BIDS data under OUTPUT_DIR. The config, pydicom, and the
@@ -584,7 +620,9 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
         sessions = _discover_sessions(input_root, args)
         missing_total = 0
         for project in sorted({p for p, _, _ in sessions}):
-            missing_total += _generate_scans_tsv(output_dir / project, physio_parent)
+            missing_total += _generate_scans_tsv(
+                output_dir / project, physio_parent, dcm2bids_config
+            )
         if missing_total:
             print(
                 f"WARNING: {missing_total} mriconvert_qc.tsv row(s) across all "
@@ -593,9 +631,9 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
             )
         return 0
 
-    if args.config is None:
+    if dcm2bids_config is None:
         sys.exit("Error: -c/--config is required unless -m/--maps is given.")
-    config_path = Path(args.config).resolve()
+    config_path = dcm2bids_config
     if not config_path.is_file():
         sys.exit(f"Error: config file not found: {config_path}")
 
@@ -692,7 +730,9 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
 
     missing_total = 0
     for project in sorted({p for p, _, _ in sessions}):
-        missing_total += _generate_scans_tsv(output_dir / project, physio_parent)
+        missing_total += _generate_scans_tsv(
+            output_dir / project, physio_parent, dcm2bids_config
+        )
     if missing_total:
         print(
             f"WARNING: {missing_total} mriconvert_qc.tsv row(s) across all "

@@ -1,4 +1,8 @@
 {
+    "Dcm2BidsConfigPath": {
+        "Description": "Absolute path to the dcm2bids config JSON used to convert this project. Set via mriconvert's -c/--config; preserved from a prior run if omitted (e.g. under -m/--maps).",
+        "Value": ""
+    },
     "PhysioParent": {
         "Description": "Absolute path to the parent directory of all raw physio recordings for this project, stored in a flat directory structure. Set via mriconvert's -y/--physio; preserved from a prior run if omitted.",
         "Value": ""

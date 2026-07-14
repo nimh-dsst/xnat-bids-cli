@@ -632,7 +632,7 @@ def _update_output_scans_tsv(
     excluded: set[str],
     rename_lookup: dict[str, str],
 ) -> None:
-    """Read ``source_scans`` (e.g. ``INPUT_DIR/PROJECT/mriconvert_qc.tsv``) and
+    """Read ``source_scans`` (e.g. ``INPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.tsv``) and
     write the renamed/QC-filtered table to ``dest_scans`` (BIDS's canonical
     ``OUTPUT_DIR/PROJECT/scans.tsv``), promoting the manifest to its final
     name in the mapped output.
@@ -733,8 +733,8 @@ def bidsmap_cmd(args: argparse.Namespace) -> int:
 
     all_warnings: list[str] = []
 
-    source_scans = bids_dir / "mriconvert_qc.tsv"
-    source_scans_json = bids_dir / "mriconvert_qc.json"
+    source_scans = input_root / f"PROJECT-{project}_mriconvert_qc.tsv"
+    source_scans_json = input_root / f"PROJECT-{project}_mriconvert_qc.json"
     skip_root_files = frozenset({
         "mriconvert_qc.tsv", "mriconvert_qc.json", "physioconvert_qc.tsv", "physioconvert_qc.json",
     })

@@ -10,8 +10,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
-# QC/status manifest written at the mri BIDS project root, alongside
-# mriconvert's mriconvert_qc.tsv/scans.tsv. Fully regenerated every run from the
+# QC/status manifest written to OUTPUT_DIR, alongside mriconvert's
+# PROJECT-<PROJECT>_mriconvert_qc.tsv. Fully regenerated every run from the
 # current mriconvert_qc.tsv content -- a visual reference for an expert reviewer,
 # not a store consulted by a later run.
 _QC_FILENAME = "physioconvert_qc.tsv"
@@ -95,6 +95,26 @@ class _LogWriter:
             writer = csv.writer(f)
             for dest in dests:
                 writer.writerow([datestamp, status, filename, physio_source, dest])
+
+
+class _StdioTee:
+    """Duplicate writes to both an underlying stream and a log file, the
+    Python equivalent of piping through ``tee``."""
+
+    def __init__(self, stream, log_file):
+        self._stream = stream
+        self._log_file = log_file
+
+    def write(self, data: str) -> int:
+        self._log_file.write(data)
+        return self._stream.write(data)
+
+    def flush(self) -> None:
+        self._stream.flush()
+        self._log_file.flush()
+
+    def isatty(self) -> bool:
+        return self._stream.isatty()
 
 
 def _fmt_freq(freq: float) -> str:
@@ -456,7 +476,7 @@ def _find_asset(name: str) -> Path | None:
     return None
 
 
-def _write_qc_dict(bids_root: Path, physio_parent: Path | None) -> None:
+def _write_qc_dict(dest: Path, physio_parent: Path | None) -> None:
     """Write physioconvert_qc.json from the static asset, injecting
     ``PhysioParent`` with this run's resolved value (mirroring mriconvert's
     ``PhysioParent`` key in mriconvert_qc.json). Run once after all conversions.
@@ -475,7 +495,6 @@ def _write_qc_dict(bids_root: Path, physio_parent: Path | None) -> None:
 
     data.setdefault("PhysioParent", {})["Value"] = str(physio_parent) if physio_parent else ""
 
-    dest = bids_root / _QC_DICT_FILENAME
     with dest.open("w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
         f.write("\n")
@@ -495,14 +514,15 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
     if args.nphysio < 1:
         sys.exit("Error: -n/--nphysio must be >= 1.")
 
-    bids_root = Path(args.output).resolve() / args.project
+    output_dir = Path(args.output).resolve()
+    bids_root = output_dir / args.project
     if not bids_root.is_dir():
         sys.exit(
             f"Error: BIDS dataset not found at {bids_root}; run xnatcli "
             "mriconvert first."
         )
 
-    mriconvert_qc_tsv = bids_root / "mriconvert_qc.tsv"
+    mriconvert_qc_tsv = output_dir / f"PROJECT-{args.project}_mriconvert_qc.tsv"
     if not mriconvert_qc_tsv.is_file():
         sys.exit(f"Error: {mriconvert_qc_tsv} not found; run xnatcli mriconvert first.")
 
@@ -528,185 +548,209 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         )
         return 0
 
-    qc_path = bids_root / _QC_FILENAME
+    qc_path = output_dir / f"PROJECT-{args.project}_{_QC_FILENAME}"
+    qc_dict_path = output_dir / f"PROJECT-{args.project}_{_QC_DICT_FILENAME}"
 
+    # Logs go straight under OUTPUT_DIR/log (not nested under PROJECT), since a
+    # single log directory can cover runs across multiple projects.
     log_path: Path | None = None
+    text_log_path: Path | None = None
     if args.log:
         while True:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_path = bids_root / "log" / f"physioconvert_{ts}_log.csv"
-            if not log_path.exists():
+            log_dir = output_dir / "log"
+            log_path = log_dir / f"physioconvert_{ts}_log.csv"
+            text_log_path = log_dir / f"physioconvert_{ts}_log.txt"
+            if not log_path.exists() and not text_log_path.exists():
                 break
             time.sleep(1)
     log_writer = _LogWriter(log_path)
 
-    counts = {
-        STATUS_CONVERTED: 0,
-        STATUS_NOT_PHYSIO: 0,
-        STATUS_READER_MISSING: 0,
-        STATUS_CONVERT_ERROR: 0,
-        STATUS_SOURCE_MISSING: 0,
-        STATUS_COLLISION: 0,
-    }
-    qc_rows: list[dict[str, str]] = []
-    # Destinations already written by an association this run, keyed by
-    # relpath -> the writing row's filename; guards against two distinct
-    # associations computing the same output path.
-    claimed: dict[str, str] = {}
+    # Mirror everything this run prints to stdout/stderr into a plain-text
+    # log alongside the CSV, the Python equivalent of piping through ``tee``.
+    orig_stdout, orig_stderr = sys.stdout, sys.stderr
+    text_log_file = None
+    if text_log_path is not None:
+        text_log_path.parent.mkdir(parents=True, exist_ok=True)
+        text_log_file = text_log_path.open("w", encoding="utf-8")
+        sys.stdout = _StdioTee(orig_stdout, text_log_file)
+        sys.stderr = _StdioTee(orig_stderr, text_log_file)
 
-    # --- Collisions: the same raw physio basename referenced by more than
-    # one mriconvert_qc.tsv row. None of those rows are converted until resolved.
-    collisions = _find_collisions(in_scope)
-    for row in in_scope:
-        physio = row["physio"].strip()
-        if physio not in collisions:
-            continue
-        filename = row["filename"]
-        counts[STATUS_COLLISION] += 1
-        print(f"{filename}: {STATUS_COLLISION} — physio {physio!r} referenced by multiple rows")
-        log_writer.write(_logging_now(), filename, STATUS_COLLISION, physio, [])
-    for physio, filenames in collisions.items():
-        print(
-            f"WARNING: physio {physio!r} is referenced by {len(filenames)} "
-            f"mriconvert_qc.tsv rows ({', '.join(filenames)}); none will be "
-            "converted until only one row references it."
-        )
-        qc_rows.append(_carry_row(physio, STATUS_COLLISION))
+    try:
+        counts = {
+            STATUS_CONVERTED: 0,
+            STATUS_NOT_PHYSIO: 0,
+            STATUS_READER_MISSING: 0,
+            STATUS_CONVERT_ERROR: 0,
+            STATUS_SOURCE_MISSING: 0,
+            STATUS_COLLISION: 0,
+        }
+        qc_rows: list[dict[str, str]] = []
+        # Destinations already written by an association this run, keyed by
+        # relpath -> the writing row's filename; guards against two distinct
+        # associations computing the same output path.
+        claimed: dict[str, str] = {}
 
-    remaining = [r for r in in_scope if r["physio"].strip() not in collisions]
-    physio_parent = _read_physio_parent(bids_root / "mriconvert_qc.json")
+        # --- Collisions: the same raw physio basename referenced by more than
+        # one mriconvert_qc.tsv row. None of those rows are converted until resolved.
+        collisions = _find_collisions(in_scope)
+        for row in in_scope:
+            physio = row["physio"].strip()
+            if physio not in collisions:
+                continue
+            filename = row["filename"]
+            counts[STATUS_COLLISION] += 1
+            print(f"{filename}: {STATUS_COLLISION} — physio {physio!r} referenced by multiple rows")
+            log_writer.write(_logging_now(), filename, STATUS_COLLISION, physio, [])
+        for physio, filenames in collisions.items():
+            print(
+                f"WARNING: physio {physio!r} is referenced by {len(filenames)} "
+                f"mriconvert_qc.tsv rows ({', '.join(filenames)}); none will be "
+                "converted until only one row references it."
+            )
+            qc_rows.append(_carry_row(physio, STATUS_COLLISION))
 
-    # --- Classify each remaining association: needs conversion, or blocked. ---
-    to_convert: list[dict[str, str]] = []
-    for row in remaining:
-        filename = row["filename"]
-        physio = row["physio"].strip()
+        remaining = [r for r in in_scope if r["physio"].strip() not in collisions]
+        mriconvert_qc_json = output_dir / f"PROJECT-{args.project}_mriconvert_qc.json"
+        physio_parent = _read_physio_parent(mriconvert_qc_json)
 
-        if not row["participant_id"] or not row["datatype"]:
-            counts[STATUS_SOURCE_MISSING] += 1
-            detail = "mriconvert_qc.tsv row has blank participant_id/datatype; cannot place physio output"
-            print(f"{filename}: {STATUS_SOURCE_MISSING} — {detail}")
-            log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
-            qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
-            continue
+        # --- Classify each remaining association: needs conversion, or blocked. ---
+        to_convert: list[dict[str, str]] = []
+        for row in remaining:
+            filename = row["filename"]
+            physio = row["physio"].strip()
 
-        if physio_parent is None:
-            counts[STATUS_SOURCE_MISSING] += 1
-            print(f"{filename}: {STATUS_SOURCE_MISSING} — PhysioParent not set/found in mriconvert_qc.json")
-            log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
-            qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
-            continue
+            if not row["participant_id"] or not row["datatype"]:
+                counts[STATUS_SOURCE_MISSING] += 1
+                detail = "mriconvert_qc.tsv row has blank participant_id/datatype; cannot place physio output"
+                print(f"{filename}: {STATUS_SOURCE_MISSING} — {detail}")
+                log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
+                qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
+                continue
 
-        raw_path = physio_parent / physio
-        if not raw_path.is_file():
-            counts[STATUS_SOURCE_MISSING] += 1
-            print(f"{filename}: {STATUS_SOURCE_MISSING} — {physio!r} not found under PhysioParent")
-            log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
-            qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
-            continue
+            if physio_parent is None:
+                counts[STATUS_SOURCE_MISSING] += 1
+                print(f"{filename}: {STATUS_SOURCE_MISSING} — PhysioParent not set/found in mriconvert_qc.json")
+                log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
+                qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
+                continue
 
-        to_convert.append(row)
+            raw_path = physio_parent / physio
+            if not raw_path.is_file():
+                counts[STATUS_SOURCE_MISSING] += 1
+                print(f"{filename}: {STATUS_SOURCE_MISSING} — {physio!r} not found under PhysioParent")
+                log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
+                qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
+                continue
 
-    # ``to_convert`` is placed in sorted filename order (not completion order)
-    # so results (and log/QC ordering) are deterministic regardless of -n.
-    to_convert.sort(key=lambda r: r["filename"])
-    tasks_by_filename = {r["filename"]: r for r in to_convert}
-    tasks = [
-        (r["filename"], str(physio_parent / r["physio"].strip())) for r in to_convert
-    ]
+            to_convert.append(row)
 
-    def _finish(row: dict[str, str], result: dict) -> None:
-        filename = row["filename"]
-        physio = row["physio"].strip()
-        start = result["start"]
+        # ``to_convert`` is placed in sorted filename order (not completion order)
+        # so results (and log/QC ordering) are deterministic regardless of -n.
+        to_convert.sort(key=lambda r: r["filename"])
+        tasks_by_filename = {r["filename"]: r for r in to_convert}
+        tasks = [
+            (r["filename"], str(physio_parent / r["physio"].strip())) for r in to_convert
+        ]
 
-        if not result["is_physio"]:
-            status = STATUS_READER_MISSING if result["reader_missing"] else STATUS_NOT_PHYSIO
+        def _finish(row: dict[str, str], result: dict) -> None:
+            filename = row["filename"]
+            physio = row["physio"].strip()
+            start = result["start"]
+
+            if not result["is_physio"]:
+                status = STATUS_READER_MISSING if result["reader_missing"] else STATUS_NOT_PHYSIO
+                counts[status] += 1
+                print(f"{filename}: {status} — {result['err'] or 'no physio channels'}")
+                log_writer.write(start, filename, status, physio, [])
+                qc_rows.append(_carry_row(physio, status))
+                return
+
+            if result["convert_error"] is not None:
+                status, written, detail = STATUS_CONVERT_ERROR, [], result["convert_error"]
+            else:
+                base_stem = Path(physio).stem
+                status, written, detail = _place_converted(
+                    Path(result["staging"]), bids_root, row, base_stem, claimed,
+                )
+
             counts[status] += 1
-            print(f"{filename}: {status} — {result['err'] or 'no physio channels'}")
-            log_writer.write(start, filename, status, physio, [])
-            qc_rows.append(_carry_row(physio, status))
-            return
+            line = f"{filename}: {status}"
+            if detail:
+                line += f" — {detail}"
+            elif written:
+                line += f" — wrote {len(written)} file(s)"
+            print(line)
+            log_writer.write(start, filename, status, physio, written)
 
-        if result["convert_error"] is not None:
-            status, written, detail = STATUS_CONVERT_ERROR, [], result["convert_error"]
+            qc_rows.append({
+                "physio": physio,
+                "status": status,
+                "n_channels": result["n_ch"],
+                "sampling_frequencies": result["freqs"],
+                "sample_count": result["sample_count"],
+                "duration_seconds": result["duration_seconds"],
+            })
+
+        if args.nphysio <= 1:
+            for task in tasks:
+                _finish(tasks_by_filename[task[0]], _run_worker(task))
         else:
-            base_stem = Path(physio).stem
-            status, written, detail = _place_converted(
-                Path(result["staging"]), bids_root, row, base_stem, claimed,
+            # phys2bids runs in worker processes (real parallelism, since it is an
+            # in-process Python library); placement stays serial in the main
+            # process and is drained in sorted-filename order (out-of-order
+            # completions are buffered until their turn), so results are fully
+            # deterministic regardless of -n.
+            with ProcessPoolExecutor(max_workers=args.nphysio) as ex:
+                fut_to_index = {ex.submit(_run_worker, t): i for i, t in enumerate(tasks)}
+                pending: dict[int, dict] = {}
+                next_index = 0
+                for fut in as_completed(fut_to_index):
+                    pending[fut_to_index[fut]] = fut.result()
+                    while next_index in pending:
+                        _finish(tasks_by_filename[tasks[next_index][0]], pending.pop(next_index))
+                        next_index += 1
+
+        _write_tsv(qc_path, qc_rows, _QC_COLUMNS)
+        _write_qc_dict(qc_dict_path, physio_parent)
+
+        total = sum(counts.values())
+        print(f"\nProcessed {total} physio association(s):")
+        for status in (
+            STATUS_CONVERTED,
+            STATUS_NOT_PHYSIO,
+            STATUS_READER_MISSING,
+            STATUS_CONVERT_ERROR,
+            STATUS_SOURCE_MISSING,
+            STATUS_COLLISION,
+        ):
+            print(f"  {status}: {counts[status]}")
+        print(f"{_QC_FILENAME} written to {qc_path}")
+        if log_path is not None:
+            print(f"Log written to {log_path}")
+        if text_log_path is not None:
+            print(f"Text log written to {text_log_path}")
+        if counts[STATUS_COLLISION]:
+            print(
+                "Some physio associations were skipped because their raw file is "
+                "referenced by more than one mriconvert_qc.tsv row (status COLLISION). "
+                "Clear all but one row's physio column and re-run."
+            )
+        if counts[STATUS_SOURCE_MISSING]:
+            print(
+                "Some physio associations could not be resolved to a file (status "
+                "SOURCE_MISSING). Check -y/--physio (mriconvert) and the "
+                "physio column and re-run."
+            )
+        if counts[STATUS_READER_MISSING]:
+            print(
+                "Some files could not be read because the reader package they "
+                "need is not installed (e.g. 'bioread' for .acq). Install it and "
+                "re-run."
             )
 
-        counts[status] += 1
-        line = f"{filename}: {status}"
-        if detail:
-            line += f" — {detail}"
-        elif written:
-            line += f" — wrote {len(written)} file(s)"
-        print(line)
-        log_writer.write(start, filename, status, physio, written)
-
-        qc_rows.append({
-            "physio": physio,
-            "status": status,
-            "n_channels": result["n_ch"],
-            "sampling_frequencies": result["freqs"],
-            "sample_count": result["sample_count"],
-            "duration_seconds": result["duration_seconds"],
-        })
-
-    if args.nphysio <= 1:
-        for task in tasks:
-            _finish(tasks_by_filename[task[0]], _run_worker(task))
-    else:
-        # phys2bids runs in worker processes (real parallelism, since it is an
-        # in-process Python library); placement stays serial in the main
-        # process and is drained in sorted-filename order (out-of-order
-        # completions are buffered until their turn), so results are fully
-        # deterministic regardless of -n.
-        with ProcessPoolExecutor(max_workers=args.nphysio) as ex:
-            fut_to_index = {ex.submit(_run_worker, t): i for i, t in enumerate(tasks)}
-            pending: dict[int, dict] = {}
-            next_index = 0
-            for fut in as_completed(fut_to_index):
-                pending[fut_to_index[fut]] = fut.result()
-                while next_index in pending:
-                    _finish(tasks_by_filename[tasks[next_index][0]], pending.pop(next_index))
-                    next_index += 1
-
-    _write_tsv(qc_path, qc_rows, _QC_COLUMNS)
-    _write_qc_dict(bids_root, physio_parent)
-
-    total = sum(counts.values())
-    print(f"\nProcessed {total} physio association(s):")
-    for status in (
-        STATUS_CONVERTED,
-        STATUS_NOT_PHYSIO,
-        STATUS_READER_MISSING,
-        STATUS_CONVERT_ERROR,
-        STATUS_SOURCE_MISSING,
-        STATUS_COLLISION,
-    ):
-        print(f"  {status}: {counts[status]}")
-    print(f"{_QC_FILENAME} written to {qc_path}")
-    if log_path is not None:
-        print(f"Log written to {log_path}")
-    if counts[STATUS_COLLISION]:
-        print(
-            "Some physio associations were skipped because their raw file is "
-            "referenced by more than one mriconvert_qc.tsv row (status COLLISION). "
-            "Clear all but one row's physio column and re-run."
-        )
-    if counts[STATUS_SOURCE_MISSING]:
-        print(
-            "Some physio associations could not be resolved to a file (status "
-            "SOURCE_MISSING). Check -y/--physio (mriconvert) and the "
-            "physio column and re-run."
-        )
-    if counts[STATUS_READER_MISSING]:
-        print(
-            "Some files could not be read because the reader package they "
-            "need is not installed (e.g. 'bioread' for .acq). Install it and "
-            "re-run."
-        )
-
-    return 1 if counts[STATUS_CONVERT_ERROR] or counts[STATUS_READER_MISSING] else 0
+        return 1 if counts[STATUS_CONVERT_ERROR] or counts[STATUS_READER_MISSING] else 0
+    finally:
+        sys.stdout, sys.stderr = orig_stdout, orig_stderr
+        if text_log_file is not None:
+            text_log_file.close()

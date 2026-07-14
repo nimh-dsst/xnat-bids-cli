@@ -498,8 +498,7 @@ def mriconfig_cmd(args: argparse.Namespace) -> int:
                 "mriconfig without -m/--maps first."
             )
         _draft_config(target)
-        if args.blank:
-            _draft_blank_config(target)
+        _draft_blank_config(target)
         return 0
 
     helper_path = _require_tool("dcm2bids_helper")
@@ -552,7 +551,6 @@ def mriconfig_cmd(args: argparse.Namespace) -> int:
         print(f"Log written to {log_path}")
 
     _draft_config(target)
-    if args.blank:
-        _draft_blank_config(target)
+    _draft_blank_config(target)
 
     return 0 if counts[STATUS_FAILURE] == 0 else 1
