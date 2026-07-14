@@ -11,8 +11,8 @@ This is the "map" half of the xnatcli workflow: `mriconvert`/`physioconvert` fir
 1. Validates that `--input` exists and that the BIDS dataset `INPUT_DIR/PROJECT/` exists.
 2. Scans `INPUT_DIR/PROJECT/` for `sub-*` directories and, within each, `ses-*` subdirectories.
 3. Writes `INPUT_DIR/PROJECT-<PROJECT>_bidsmap.tsv` with the columns `participant_id`, `participant_rename`, `session_id`, `session_rename`. One row is emitted per `(participant, session)` pair, with the two `*_rename` columns left blank for later editing. Rows are sorted alphanumerically by `participant_id` then `session_id`.
-   - If the dataset has **no** sessions (no participant has any `ses-*` subdirectory), only the `participant_id` and `participant_rename` columns are written, one row per participant.
-   - If the dataset uses sessions but a particular participant has no `ses-*` subdirectory, that participant is skipped with a warning.
+    - If the dataset has **no** sessions (no participant has any `ses-*` subdirectory), only the `participant_id` and `participant_rename` columns are written, one row per participant.
+    - If the dataset uses sessions but a particular participant has no `ses-*` subdirectory, that participant is skipped with a warning.
 4. If `PROJECT-<PROJECT>_bidsmap.tsv` already exists, a fresh blank map is generated and compared to it (with `pandas`): any `(participant_id, session_id)` pairs not already present are appended, and all existing rows — including any `*_rename` values already filled in — are preserved. The merged table is re-sorted and rewritten.
 
 ```bash

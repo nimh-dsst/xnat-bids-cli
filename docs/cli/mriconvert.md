@@ -4,14 +4,14 @@ Converts XNAT-downloaded sessions to BIDS via [`Dcm2Bids`](https://unfmontreal.g
 
 1. Validates `--input`, `--config`, and that `dcm2bids` and `dcm2niix` are on `PATH`. Imports `pydicom` (used to confirm a session has at least one readable DICOM before running the conversion).
 2. Resolves the set of sessions to convert from one of the mutually exclusive selectors:
-   - `-1 PROJECT SUBJECT EXPERIMENT` — exactly one session.
-   - `-s/--subject PROJECT SUBJECT` — every `EXPERIMENT` directory under that subject.
-   - `-p/--project PROJECT` — every `EXPERIMENT` directory under every subject in the project.
+    - `-1 PROJECT SUBJECT EXPERIMENT` — exactly one session.
+    - `-s/--subject PROJECT SUBJECT` — every `EXPERIMENT` directory under that subject.
+    - `-p/--project PROJECT` — every `EXPERIMENT` directory under every subject in the project.
 3. For each session:
-   - Walks `<input>/PROJECT/SUBJECT/EXPERIMENT/scans/` recursively for files with extension `.dcm` or `.IMA` (case-insensitive) and tries to read the first match with `pydicom.dcmread(stop_before_pixels=True)`. If no readable DICOM is found, the session is marked `EMPTY`.
-   - Derives the BIDS labels from the directory names: `PARTICIPANT` is the `SUBJECT` directory name with non-`[A-Za-z0-9]` characters stripped, `SESSION` is the `EXPERIMENT` directory name similarly stripped (case preserved). Because `xnatcli download` writes labels (not XNAT IDs) for these directories, the resulting BIDS labels are derived from human-readable identifiers.
-   - If `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/` already has contents, prints a `WARNING:` line; the conversion proceeds with `--clobber`.
-   - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT --clobber`.
+    - Walks `<input>/PROJECT/SUBJECT/EXPERIMENT/scans/` recursively for files with extension `.dcm` or `.IMA` (case-insensitive) and tries to read the first match with `pydicom.dcmread(stop_before_pixels=True)`. If no readable DICOM is found, the session is marked `EMPTY`.
+    - Derives the BIDS labels from the directory names: `PARTICIPANT` is the `SUBJECT` directory name with non-`[A-Za-z0-9]` characters stripped, `SESSION` is the `EXPERIMENT` directory name similarly stripped (case preserved). Because `xnatcli download` writes labels (not XNAT IDs) for these directories, the resulting BIDS labels are derived from human-readable identifiers.
+    - If `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/` already has contents, prints a `WARNING:` line; the conversion proceeds with `--clobber`.
+    - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT --clobber`.
 4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `<output>/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv` — the same `log/` directory used by `mriconfig`.
 5. With `-d/--delete`, after a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT` is removed (via `shutil.rmtree`). The `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result. `FAILURE` and `NONEXISTENT` sessions are left untouched. Deletion happens after the per-session log row is written, so the log still records what was converted before removal.
 6. After all sessions are processed, a dataset-wide `mriconvert_qc.tsv` is (re)written at `<output>/PROJECT-<PROJECT>_mriconvert_qc.tsv`, and the static data dictionary [`src/assets/mriconvert_qc.json`](https://github.com/nimh-dsst/xnat-bids-cli/blob/main/src/assets/mriconvert_qc.json) is copied alongside it as `<output>/PROJECT-<PROJECT>_mriconvert_qc.json`. See [`mriconvert_qc.tsv`](#mriconvert_qctsv) below.

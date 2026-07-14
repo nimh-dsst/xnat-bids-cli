@@ -20,9 +20,9 @@ nav = [
       { "xnatcli download" = "cli/download.md" },
       { "xnatcli mriconfig" = "cli/mriconfig.md" },
       { "xnatcli mriconvert" = "cli/mriconvert.md" },
-      { "xnatcli cubids" = "cli/cubids.md" },
-      { "xnatcli bidsmap" = "cli/bidsmap.md" },
       { "xnatcli physioconvert" = "cli/physioconvert.md" },
+      { "xnatcli bidsmap" = "cli/bidsmap.md" },
+      { "xnatcli cubids" = "cli/cubids.md" },
     ] },
 ]
 

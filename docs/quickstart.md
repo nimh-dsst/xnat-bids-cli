@@ -40,10 +40,10 @@ This downloads all the experiments listed in the CSV file `PROJECT-PROJECT_ID.cs
 ## 4. Creating a "starter" Dcm2Bids configuration JSON file
 
 ```shell
-uv run xnatcli mriconfig -i ~/data/xnat -p PROJECT_ID -o ~/data/unmapped -n 4 -l
+uv run xnatcli mriconfig -i ~/data/xnat -p PROJECT_ID -o ~/data/unmapped -n 4 -l -d
 ```
 
-This command generates a starter Dcm2Bids configuration JSON file based on the MRI data downloaded from the `~/data/xnat` directory. The `-i` option specifies the input directory containing the downloaded data, `-p` specifies the project ID (it should be within that input directory), `-o` specifies the output directory for the configuration file, `-n 4` indicates that 4 parallel processes should be used to run dcm2bids_helper, and `-l` option indicates that the process should save logs.
+This command generates a starter Dcm2Bids configuration JSON file based on the MRI data downloaded from the `~/data/xnat` directory. The `-i` option specifies the input directory containing the downloaded data, `-p` specifies the project ID (it should be within that input directory), `-o` specifies the output directory for the configuration file, `-n 4` indicates that 4 parallel processes should be used to run dcm2bids_helper, and `-l` option indicates that the process should save logs. The `-d` option (recommended) indicates you would like to delete all the NIfTI files and only keep the JSON files after running the helper.
 
 ## 5. Running Dcm2Bids with `mriconvert`
 
