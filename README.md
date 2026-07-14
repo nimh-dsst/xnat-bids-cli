@@ -19,6 +19,10 @@ uv sync
 
 See the [Installation guide](https://xnatbidscli.readthedocs.io/installation/) for making the `xnatcli` command available on `PATH` and the full list of runtime dependencies.
 
+## Reporting Issues and Feature Requests
+
+Use the [GitHub Issues](https://github.com/nimh-dsst/xnat-bids-cli/issues) feature here to report anything wrong with the CLI, code, or docs. You can also provide feature requests via GitHub Issues.
+
 ## Attribution
 
 Developed and tested primarily by [Eric Earl](https://github.com/ericearl) of the [NIMH Data Science and Sharing Team](https://github.com/nimh-dsst) primarily for the NIMH Intramural Research Program labs. Claude Code and GitHub Copilot were used to develop features, docs, and modifications, as prompted by Eric Earl.
