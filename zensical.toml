@@ -28,6 +28,9 @@ nav = [
 
 [project.theme]
 
+logo = "assets/images/logo.png"
+favicon = "assets/images/favicon.png"
+
 language = "en"
 
 features = [
