@@ -91,4 +91,4 @@ The columns, in order:
 | `rating_reason` | Empty — free-text reason for `qc_rating`. |
 | `qc_notes` | Empty — free-text QC notes. |
 
-`mriconvert_qc.json` additionally carries two top-level keys, each `{"Description": ..., "Value": "<path or empty>"}` and always the first two keys in the file, in this order: `PhysioParent` (the absolute path passed via `-y/--physio`, the flat directory holding every raw physio recording for the project) and `Dcm2BidsConfigPath` (the absolute path passed via `-c/--config`, the `dcm2bids` config JSON used for this conversion).
+`mriconvert_qc.json` additionally carries two top-level keys, each with `{"Description": ..., "Value": "<path or empty>"}` and always the first two keys in the file, in this order: `Dcm2BidsConfigPath` (the absolute path passed via `-c/--config`, the `dcm2bids` config JSON used for this conversion) and `PhysioParent` (the absolute path passed via `-y/--physio`, the flat directory holding every raw physio recording for the project).
