@@ -351,9 +351,12 @@ def _write_scans_json(
 
     Loads the static data dictionary (never mutated in place) and sets
     ``PhysioParent.Value``/``Dcm2BidsConfigPath.Value`` to ``physio_parent``/
-    ``dcm2bids_config`` when given. When either is None, preserves whatever
-    value was already recorded for it in the destination mriconvert_qc.json
-    from a prior run, if any, so omitting ``-y``/``-c`` on a rerun (e.g. under
+    ``dcm2bids_config`` when given. When ``dcm2bids_config`` is given,
+    ``Dcm2BidsConfigPath.LastModified`` is also stamped with the current time
+    (in Python logging's default ``asctime`` format). When either is None,
+    preserves whatever value (and, for ``Dcm2BidsConfigPath``, ``LastModified``)
+    was already recorded for it in the destination mriconvert_qc.json from a
+    prior run, if any, so omitting ``-y``/``-c`` on a rerun (e.g. under
     ``-m/--maps``) doesn't erase it.
     """
     src_json = _find_scans_json()
@@ -387,11 +390,18 @@ def _write_scans_json(
             data.setdefault("PhysioParent", {})["Value"] = prior_value
 
     if dcm2bids_config is not None:
-        data.setdefault("Dcm2BidsConfigPath", {})["Value"] = str(dcm2bids_config)
+        entry = data.setdefault("Dcm2BidsConfigPath", {})
+        entry["Value"] = str(dcm2bids_config)
+        entry["LastModified"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
     elif prior is not None:
-        prior_value = prior.get("Dcm2BidsConfigPath", {}).get("Value", "")
+        prior_entry = prior.get("Dcm2BidsConfigPath", {})
+        prior_value = prior_entry.get("Value", "")
         if prior_value:
-            data.setdefault("Dcm2BidsConfigPath", {})["Value"] = prior_value
+            entry = data.setdefault("Dcm2BidsConfigPath", {})
+            entry["Value"] = prior_value
+            prior_last_modified = prior_entry.get("LastModified", "")
+            if prior_last_modified:
+                entry["LastModified"] = prior_last_modified
 
     with dest_json.open("w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)

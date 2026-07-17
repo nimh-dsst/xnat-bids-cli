@@ -115,8 +115,8 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] `-m/--maps` (without `dcm2bids`/`dcm2niix`/`pydicom`/`-c` available) still succeeds by only regenerating `mriconvert_qc.tsv`/`mriconvert_qc.json` from already-converted BIDS data
 - [ ] `-y/--physio PHYSIO_PARENT_DIR` records `PhysioParent` in `mriconvert_qc.json`
 - [ ] Omitting `-y/--physio` on a subsequent run preserves a `PhysioParent` recorded by a prior run
-- [ ] `-c/--config CONFIG_FILE` records `Dcm2BidsConfigPath` in `mriconvert_qc.json`
-- [ ] `-m/--maps` (which does not require `-c/--config`) preserves a `Dcm2BidsConfigPath` recorded by a prior run
+- [ ] `-c/--config CONFIG_FILE` records `Dcm2BidsConfigPath` (and a `LastModified` timestamp) in `mriconvert_qc.json`
+- [ ] `-m/--maps` (which does not require `-c/--config`) preserves a `Dcm2BidsConfigPath` and its `LastModified` recorded by a prior run
 - [ ] Combine `-p`, `-n`, `-l`, `-a`, `-d`, `-y` together in one invocation and verify all behaviors hold simultaneously
 - [ ] Omitting `-i/--input` or `-o/--output` fails with an argparse "required" error
 

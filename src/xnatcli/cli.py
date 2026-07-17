@@ -260,10 +260,10 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="CONFIG_FILE",
         help="Path to the dcm2bids config JSON to use (e.g., the one drafted "
         "by `xnatcli mriconfig`). Required unless -m/--maps is given. "
-        "Recorded as the top-level 'Dcm2BidsConfigPath' key in "
-        "OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.json. If omitted (only "
-        "possible with -m/--maps), a Dcm2BidsConfigPath recorded on a prior "
-        "run is preserved.",
+        "Recorded as the top-level 'Dcm2BidsConfigPath' key (with a "
+        "'LastModified' timestamp) in OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.json. "
+        "If omitted (only possible with -m/--maps), a Dcm2BidsConfigPath "
+        "recorded on a prior run is preserved.",
     )
     mriconvert_parser.add_argument(
         "-n",

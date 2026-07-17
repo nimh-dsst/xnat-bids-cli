@@ -1,7 +1,8 @@
 {
     "Dcm2BidsConfigPath": {
-        "Description": "Absolute path to the dcm2bids config JSON used to convert this project. Set via mriconvert's -c/--config; preserved from a prior run if omitted (e.g. under -m/--maps).",
-        "Value": ""
+        "Description": "Absolute path to the dcm2bids config JSON used to convert this project. Set via mriconvert's -c/--config; preserved from a prior run if omitted (e.g. under -m/--maps). LastModified is the timestamp (Python logging's default asctime format) of the last time -c/--config was passed and Value was updated.",
+        "Value": "",
+        "LastModified": ""
     },
     "PhysioParent": {
         "Description": "Absolute path to the parent directory of all raw physio recordings for this project, stored in a flat directory structure. Set via mriconvert's -y/--physio; preserved from a prior run if omitted.",
