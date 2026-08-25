@@ -85,7 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         metavar="N",
-        help="Number of parallel downloads (default 1). Per-experiment for --csv input; per-file for -1 input.",
+        help="Number of parallel experiment downloads for --csv input "
+        "(default 1). Not used with -1.",
     )
     download_parser.add_argument(
         "-l",

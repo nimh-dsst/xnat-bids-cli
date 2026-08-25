@@ -1,13 +1,11 @@
 # `xnatcli download`
 
-Downloads every file belonging to one XNAT experiment (single-experiment mode, `-1`) or every experiment listed in an `xnatcli query` CSV (batch mode, `--csv`). For each experiment, all scans (with their resources and files) plus any session-level resources are written.
+Downloads every file belonging to one XNAT experiment (single-experiment mode, `-1`) or every experiment listed in an `xnatcli query` CSV (batch mode, `--csv`). Each experiment is fetched as whole-experiment zip archives rather than one HTTP request per file.
 
 1. Loads credentials from `~/.xnatcli/credentials.cfg`; if the file is missing or incomplete, exits with a message telling you to run `xnatcli login`.
 2. Connects to the stored server via PyXNAT.
-3. For each experiment, walks `project → subject → experiment`, then iterates scans, their resources, and every file in each resource. Also iterates session-level resources on the experiment itself.
-4. Writes each file to:
-    - `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/scans/<scan_id>/<resource_label>/<filename>` for scan files
-    - `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/resources/<resource_label>/<filename>` for session-level resource files
+3. For each experiment, walks `project → subject → experiment`, then issues two bulk zip requests against XNAT's REST API: one for all scans, one for all session-level resources.
+4. Each zip is extracted directly into `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, following XNAT's own scan/resource folder naming (not a custom path scheme), then discarded.
 
     `PROJECT` is the canonical XNAT project ID; `SUBJECT` and `EXPERIMENT` are the user-facing labels emitted by `xnatcli query`.
 
@@ -26,7 +24,7 @@ xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR
 | `-1 PROJECT SUBJECT EXPERIMENT` | Download a single experiment. Each value may be either the XNAT ID or the user-facing label. |
 | `-c`, `--csv`, `-i`, `--input` | Path to a CSV file (`xnatcli query` output) listing experiments to download. Must contain the columns `PROJECT`, `SUBJECT_LABEL`, `EXPERIMENT_LABEL`; any other columns (e.g., `SUBJECT_ID`, `EXPERIMENT_ID`, `EXPERIMENT_DATE`) are ignored. |
 | `-o`, `--output` | **Required.** Directory to write the downloaded files into (created if missing). |
-| `-n`, `--ndownload` | *Optional.* Number of parallel downloads (default `1`). Per-experiment for `--csv`; per-file for `-1`. |
+| `-n`, `--ndownload` | *Optional.* Number of parallel experiment downloads for `--csv` (default `1`). Not used with `-1`. |
 | `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start). |
 
 ## Per-experiment STATUS (and exit code)
@@ -35,11 +33,10 @@ In `--csv` mode, the run continues through all rows even if some fail and exits 
 
 | STATUS | Meaning |
 | --- | --- |
-| `COMPLETE` | Every file in the experiment downloaded successfully. |
-| `PARTIAL` | At least one file succeeded and at least one failed. |
-| `FAILURE` | The experiment exists with files, but every file download raised. |
+| `COMPLETE` | The scans and/or resources zip request(s) succeeded. |
+| `FAILURE` | The experiment exists, but a zip request raised an error. If the underlying HTTP connection was dropped mid-download (a transient network/server timeout), the reported error names this cause explicitly rather than a generic message. |
 | `NONEXISTENT` | The experiment lookup did not find anything on the server. |
-| `EMPTY` | The experiment exists but has zero files. |
+| `EMPTY` | The experiment exists but has no scans and no session-level resources. |
 
 Exit code is `0` if every processed experiment is `COMPLETE` or `EMPTY`, and `1` otherwise.
 

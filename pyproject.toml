@@ -12,6 +12,7 @@ dependencies = [
     "phys2bids>=2.10",
     "pydicom>=2.4",
     "pyxnat>=1.6",
+    "requests>=2",
 ]
 
 [project.scripts]

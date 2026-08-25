@@ -1,15 +1,18 @@
 import argparse
 import csv
-import os
+import shutil
 import sys
 import threading
 import time
+import zipfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
+import requests
 from pyxnat import Interface
+from pyxnat.core import downloadutils
 
 from .archive import (
     OK_STATUSES as ARCHIVE_OK_STATUSES,
@@ -19,7 +22,6 @@ from .archive import (
 from .login import load_credentials
 
 STATUS_COMPLETE = "COMPLETE"
-STATUS_PARTIAL = "PARTIAL"
 STATUS_FAILURE = "FAILURE"
 STATUS_NONEXISTENT = "NONEXISTENT"
 STATUS_EMPTY = "EMPTY"
@@ -92,200 +94,64 @@ def _close_thread_interface() -> None:
         _thread_iface.iface = None
 
 
-def _enable_ansi() -> bool:
-    if not sys.stdout.isatty():
-        return False
-    if os.name != "nt":
-        return True
-    # On Windows, try to enable VT processing. If the call fails (e.g., on
-    # mintty/Cygwin where there is no Win32 console handle), assume the
-    # terminal handles ANSI itself; isatty was already true.
-    try:
-        import ctypes
+def _describe_download_error(e: Exception) -> str:
+    """Return a clear message for an exception raised during a zip download.
 
-        kernel32 = ctypes.windll.kernel32
-        STD_OUTPUT_HANDLE = -11
-        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
-        handle = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
-        mode = ctypes.c_ulong()
-        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            kernel32.SetConsoleMode(
-                handle, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING
-            )
-    except Exception:
-        pass
-    return True
-
-
-class _ProgressDisplay:
-    """One in-place progress bar per concurrent triplet.
-
-    Reserves n_slots terminal lines below the cursor at construction. Each
-    slot displays a 20-character bar (5% per cell), file count, percent, and
-    the PROJECT/SUBJECT/EXPERIMENT label of the triplet currently using it.
-    Slots are reused as triplets finish; the final-state bar of a finished
-    triplet remains visible until a new one takes the slot.
+    pyxnat's own zip-download code (``downloadutils.download`` and
+    ``resources.CObject.download``) wraps ``response.iter_content()`` in a
+    bare ``except Exception as e: sys.stderr.write(e)``. Since ``write()``
+    requires a ``str``, that line itself raises a ``TypeError`` that masks
+    whatever actually broke the download (almost always a
+    ``requests.exceptions.ChunkedEncodingError`` from the server or a proxy
+    dropping the connection mid-transfer). Unwrap that TypeError's context
+    to surface the real cause instead of the confusing "write() argument
+    must be str" message.
     """
-
-    BAR_WIDTH = 20
-
-    def __init__(self, n_slots: int):
-        self._n_slots = max(0, n_slots)
-        self._lock = threading.Lock()
-        self._slots: list[bool] = [False] * self._n_slots
-        self._states: list[tuple[str, int, int, str | None]] = [
-            ("", 0, 0, None) for _ in range(self._n_slots)
-        ]
-        self._enabled = self._n_slots > 0 and _enable_ansi()
-        if self._enabled:
-            sys.stdout.write("\n" * self._n_slots)
-            sys.stdout.flush()
-
-    @classmethod
-    def _format(
-        cls, label: str, done: int, total: int, status: str | None
-    ) -> str:
-        if total <= 0:
-            pct = 100.0 if status else 0.0
-            filled = cls.BAR_WIDTH if status else 0
-        else:
-            pct = (done / total) * 100.0
-            filled = min(cls.BAR_WIDTH, int(done * cls.BAR_WIDTH / total))
-        bar = "#" * filled + "-" * (cls.BAR_WIDTH - filled)
-        suffix = f" {status}" if status else ""
-        return f"[{bar}] {done}/{total} ({pct:5.1f}%) {label}{suffix}"
-
-    def _redraw_locked(self) -> None:
-        # Cursor sits below the bar area. Move up to the top, rewrite each
-        # line, ending again below the bar area.
-        sys.stdout.write(f"\x1b[{self._n_slots}A")
-        for i in range(self._n_slots):
-            label, done, total, status = self._states[i]
-            sys.stdout.write("\r\x1b[2K")
-            if label:
-                sys.stdout.write(self._format(label, done, total, status))
-            sys.stdout.write("\n")
-        sys.stdout.flush()
-
-    def acquire(self, label: str, total: int) -> int:
-        with self._lock:
-            for i, occupied in enumerate(self._slots):
-                if not occupied:
-                    self._slots[i] = True
-                    self._states[i] = (label, 0, total, None)
-                    if self._enabled:
-                        self._redraw_locked()
-                    return i
-            return -1
-
-    def update(self, slot: int, done: int) -> None:
-        if slot < 0:
-            return
-        with self._lock:
-            label, _, total, status = self._states[slot]
-            self._states[slot] = (label, done, total, status)
-            if self._enabled:
-                self._redraw_locked()
-
-    def release(self, slot: int, status: str) -> None:
-        if slot < 0:
-            return
-        with self._lock:
-            label, done, total, _ = self._states[slot]
-            self._states[slot] = (label, done, total, status)
-            self._slots[slot] = False
-            if self._enabled:
-                self._redraw_locked()
-            else:
-                print(self._format(label, done, total, status))
-
-    def print_above(self, msg: str) -> None:
-        with self._lock:
-            if not self._enabled:
-                print(msg)
-                return
-            sys.stdout.write(f"\x1b[{self._n_slots}A")
-            sys.stdout.write("\x1b[J")
-            for line in msg.split("\n"):
-                sys.stdout.write(line + "\n")
-            sys.stdout.write("\n" * self._n_slots)
-            sys.stdout.flush()
-            self._redraw_locked()
-
-    def close(self) -> None:
-        with self._lock:
-            sys.stdout.flush()
+    context = e.__context__
+    if isinstance(e, TypeError) and isinstance(context, requests.exceptions.RequestException):
+        return (
+            f"connection dropped during zip download ({context}); "
+            "this is usually a transient network/server timeout, try again"
+        )
+    if isinstance(e, requests.exceptions.RequestException):
+        return (
+            f"connection dropped during zip download ({e}); "
+            "this is usually a transient network/server timeout, try again"
+        )
+    return str(e)
 
 
-def _enumerate_files(experiment) -> list[tuple[Path, object]]:
-    files: list[tuple[Path, object]] = []
-    for scan in experiment.scans():
-        scan_id = scan.id()
-        for resource in scan.resources():
-            label = resource.label()
-            for f in resource.files():
-                files.append(
-                    (Path("scans") / scan_id / label / f.label(), f)
-                )
-    for resource in experiment.resources():
-        label = resource.label()
-        for f in resource.files():
-            files.append((Path("resources") / label / f.label(), f))
-    return files
+def _zip_wrapper_prefix(names: list[str]) -> str:
+    """Return the shared top-level path segment across all zip members, if any.
+
+    XNAT's zip export nests every entry under a single wrapper directory
+    (typically named after the experiment), which would otherwise reproduce
+    an identically-named EXPERIMENT/EXPERIMENT folder on disk. Detecting it
+    by shared prefix rather than a hardcoded name keeps this robust to
+    whatever XNAT actually calls it.
+    """
+    segments = {n.split("/", 1)[0] for n in names if "/" in n and n.split("/", 1)[0]}
+    if len(segments) == 1:
+        return next(iter(segments)) + "/"
+    return ""
 
 
-def _download_files(
-    files: list[tuple[Path, object]],
-    experiment_root: Path,
-    n_parallel: int,
-    on_file_complete: Callable[[bool], None] | None = None,
-    on_error: Callable[[str], None] | None = None,
-) -> tuple[int, int]:
-    success = 0
-    failure = 0
-
-    def _one(rel_dest: Path, f) -> tuple[bool, str | None]:
-        dest = experiment_root / rel_dest
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            f.get(str(dest))
-            return True, None
-        except Exception as e:
-            return False, f"ERROR downloading {dest}: {e}"
-
-    def _handle(ok: bool, err: str | None) -> None:
-        nonlocal success, failure
-        if ok:
-            success += 1
-        else:
-            failure += 1
-            if err and on_error is not None:
-                on_error(err)
-        if on_file_complete is not None:
-            on_file_complete(ok)
-
-    if n_parallel <= 1:
-        for rel_dest, f in files:
-            ok, err = _one(rel_dest, f)
-            _handle(ok, err)
-    else:
-        with ThreadPoolExecutor(max_workers=n_parallel) as ex:
-            futures = [ex.submit(_one, rel, f) for rel, f in files]
-            for fut in as_completed(futures):
-                ok, err = fut.result()
-                _handle(ok, err)
-
-    return success, failure
-
-
-def _classify_status(file_count: int, success: int, failure: int) -> str:
-    if file_count == 0:
-        return STATUS_EMPTY
-    if failure == 0:
-        return STATUS_COMPLETE
-    if success == 0:
-        return STATUS_FAILURE
-    return STATUS_PARTIAL
+def _extract_zip_flattened(zip_path: Path, dest_dir: Path) -> None:
+    """Extract zip_path into dest_dir, stripping any shared wrapper directory."""
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+        prefix = _zip_wrapper_prefix(names)
+        for name in names:
+            if name.endswith("/"):
+                continue  # directory entry
+            rel = name[len(prefix):] if prefix and name.startswith(prefix) else name
+            if not rel:
+                continue
+            target = dest_dir / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(name) as src, target.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+    zip_path.unlink(missing_ok=True)
 
 
 def _process_experiment(
@@ -294,9 +160,17 @@ def _process_experiment(
     subject: str,
     experiment: str,
     output_dir: Path,
-    n_parallel_files: int,
-    progress: _ProgressDisplay | None = None,
+    report: Callable[[str], None],
 ) -> str:
+    """Download one experiment as whole-experiment zip archives.
+
+    Two bulk requests are made against XNAT's REST zip-export endpoint (one
+    for scans, one for session-level resources) via pyxnat, rather than one
+    HTTP request per file. Each zip is flattened into the experiment's output
+    directory (stripping XNAT's own wrapper folder, see
+    ``_extract_zip_flattened``), so the on-disk layout follows XNAT's own
+    scan/resource folder naming without an extra EXPERIMENT/EXPERIMENT level.
+    """
     label = f"{project}/{subject}/{experiment}"
     try:
         exp_obj = (
@@ -306,44 +180,44 @@ def _process_experiment(
         )
         if not exp_obj.exists():
             return STATUS_NONEXISTENT
-        files = _enumerate_files(exp_obj)
     except Exception as e:
-        msg = f"Error walking {label}: {e}"
-        if progress is not None:
-            progress.print_above(msg)
-        else:
-            _safe_print(msg)
+        report(f"Error looking up {label}: {e}")
         return STATUS_FAILURE
 
-    if not files:
-        return STATUS_EMPTY
-
     experiment_root = output_dir / project / subject / experiment
+    experiment_root.mkdir(parents=True, exist_ok=True)
 
-    slot = progress.acquire(label, len(files)) if progress is not None else -1
-    done = [0]
-    done_lock = threading.Lock()
+    got_scans = False
+    got_resources = False
+    failed = False
 
-    def _on_complete(_ok: bool) -> None:
-        with done_lock:
-            done[0] += 1
-            local_done = done[0]
-        if progress is not None:
-            progress.update(slot, local_done)
+    try:
+        zip_path = exp_obj.scans().download(str(experiment_root), extract=False)
+        _extract_zip_flattened(Path(zip_path), experiment_root)
+        got_scans = True
+    except LookupError:
+        pass  # no scans on this experiment
+    except Exception as e:
+        report(f"  Error downloading scans for {label}: {_describe_download_error(e)}")
+        failed = True
 
-    def _on_error(msg: str) -> None:
-        if progress is not None:
-            progress.print_above(f"  {msg}")
-        else:
-            _safe_print(f"  {msg}")
+    try:
+        zip_path = downloadutils.download(
+            str(experiment_root), exp_obj.resources(), extract=False
+        )
+        _extract_zip_flattened(Path(zip_path), experiment_root)
+        got_resources = True
+    except LookupError:
+        pass  # no session-level resources on this experiment
+    except Exception as e:
+        report(f"  Error downloading resources for {label}: {_describe_download_error(e)}")
+        failed = True
 
-    success, failure = _download_files(
-        files, experiment_root, n_parallel_files, _on_complete, _on_error
-    )
-    status = _classify_status(len(files), success, failure)
-    if progress is not None:
-        progress.release(slot, status)
-    return status
+    if failed:
+        return STATUS_FAILURE
+    if not got_scans and not got_resources:
+        return STATUS_EMPTY
+    return STATUS_COMPLETE
 
 
 def _read_csv_rows(path: Path) -> list[tuple[str, str, str]]:
@@ -401,30 +275,21 @@ def _run_single(
     subject: str,
     experiment: str,
     output_dir: Path,
-    n_parallel_files: int,
     log_writer: _LogWriter,
     do_archive: bool,
     do_delete: bool,
 ) -> str:
-    progress = _ProgressDisplay(1)
     iface = Interface(server=server, user=user, password=password)
     try:
         start = _logging_now()
         status = _process_experiment(
-            iface,
-            project,
-            subject,
-            experiment,
-            output_dir,
-            n_parallel_files,
-            progress,
+            iface, project, subject, experiment, output_dir, _safe_print
         )
     finally:
         try:
             iface.disconnect()
         except Exception:
             pass
-        progress.close()
     log_writer.write(start, project, subject, experiment, status)
     _archive_and_maybe_delete(
         output_dir,
@@ -451,41 +316,34 @@ def _run_csv(
 ) -> dict[str, int]:
     counts = {
         STATUS_COMPLETE: 0,
-        STATUS_PARTIAL: 0,
         STATUS_FAILURE: 0,
         STATUS_NONEXISTENT: 0,
         STATUS_EMPTY: 0,
     }
 
-    n_slots = max(1, n_parallel_experiments)
-    progress = _ProgressDisplay(n_slots)
-
     def _worker(triplet: tuple[str, str, str]) -> str:
         p, s, e = triplet
         iface = _get_thread_interface(server, user, password)
         start = _logging_now()
-        status = _process_experiment(iface, p, s, e, output_dir, 1, progress)
+        status = _process_experiment(iface, p, s, e, output_dir, _safe_print)
         log_writer.write(start, p, s, e, status)
         _archive_and_maybe_delete(
-            output_dir, p, s, e, do_archive, do_delete, progress.print_above
+            output_dir, p, s, e, do_archive, do_delete, _safe_print
         )
         return status
 
-    try:
-        if n_parallel_experiments <= 1:
-            try:
-                for triplet in rows:
-                    counts[_worker(triplet)] += 1
-            finally:
-                _close_thread_interface()
-        else:
-            with ThreadPoolExecutor(max_workers=n_parallel_experiments) as ex:
-                futures = [ex.submit(_worker, t) for t in rows]
-                for fut in as_completed(futures):
-                    counts[fut.result()] += 1
+    if n_parallel_experiments <= 1:
+        try:
+            for triplet in rows:
+                counts[_worker(triplet)] += 1
+        finally:
+            _close_thread_interface()
+    else:
+        with ThreadPoolExecutor(max_workers=n_parallel_experiments) as ex:
+            futures = [ex.submit(_worker, t) for t in rows]
+            for fut in as_completed(futures):
+                counts[fut.result()] += 1
             # Worker threads' Interface objects are GC'd when the pool shuts down.
-    finally:
-        progress.close()
 
     return counts
 
@@ -493,6 +351,10 @@ def _run_csv(
 def download_cmd(args: argparse.Namespace) -> int:
     if args.ndownload < 1:
         sys.exit("Error: -n/--ndownload must be >= 1.")
+    if args.triplet is not None and args.ndownload != 1:
+        sys.exit(
+            "Error: -n/--ndownload only applies to --csv/--input downloads."
+        )
     if args.delete and not args.archive:
         sys.exit("Error: -d/--delete requires -a/--archive.")
 
@@ -520,7 +382,6 @@ def download_cmd(args: argparse.Namespace) -> int:
             subject,
             experiment,
             output_dir,
-            args.ndownload,
             log_writer,
             args.archive,
             args.delete,
@@ -548,7 +409,6 @@ def download_cmd(args: argparse.Namespace) -> int:
     print(f"\nProcessed {total} experiment(s):")
     for status in (
         STATUS_COMPLETE,
-        STATUS_PARTIAL,
         STATUS_FAILURE,
         STATUS_NONEXISTENT,
         STATUS_EMPTY,
@@ -556,9 +416,5 @@ def download_cmd(args: argparse.Namespace) -> int:
         print(f"  {status}: {counts[status]}")
     if log_path is not None:
         print(f"Log written to {log_path}")
-    bad = (
-        counts[STATUS_PARTIAL]
-        + counts[STATUS_FAILURE]
-        + counts[STATUS_NONEXISTENT]
-    )
+    bad = counts[STATUS_FAILURE] + counts[STATUS_NONEXISTENT]
     return 0 if bad == 0 else 1
