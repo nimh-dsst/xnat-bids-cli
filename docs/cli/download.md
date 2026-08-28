@@ -9,12 +9,17 @@ Downloads every file belonging to one XNAT experiment (single-experiment mode, `
 
     `PROJECT` is the canonical XNAT project ID; `SUBJECT` and `EXPERIMENT` are the user-facing labels emitted by `xnatcli query`.
 
+5. With `-a/--archive`, after each experiment is downloaded, its `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory is tar+gzipped to `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz`. An existing archive at that path is left untouched and reported as `SKIPPED`. With `-d/--delete` (requires `-a/--archive`), the `EXPERIMENT` directory is removed once its archive is `COMPLETE` or `SKIPPED`; the `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result.
+
 ```bash
 # Single experiment
 xnatcli download -1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR
 
 # Batch from a query CSV
 xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR
+
+# Batch download, then archive and delete each experiment's raw files
+xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR -a -d
 ```
 
 `-1` and `--csv` are mutually exclusive; exactly one must be supplied.
@@ -26,6 +31,8 @@ xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR
 | `-o`, `--output` | **Required.** Directory to write the downloaded files into (created if missing). |
 | `-n`, `--ndownload` | *Optional.* Number of parallel experiment downloads for `--csv` (default `1`). Not used with `-1`. |
 | `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start). |
+| `-a`, `--archive` | *Optional.* After downloading each experiment, tar+gzip its `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory into `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz`. Existing archives are skipped with a warning. |
+| `-d`, `--delete` | *Optional.* Requires `-a/--archive`. After a successful archive, delete the `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |
 
 ## Per-experiment STATUS (and exit code)
 
@@ -38,7 +45,20 @@ In `--csv` mode, the run continues through all rows even if some fail and exits 
 | `NONEXISTENT` | The experiment lookup did not find anything on the server. |
 | `EMPTY` | The experiment exists but has no scans and no session-level resources. |
 
-Exit code is `0` if every processed experiment is `COMPLETE` or `EMPTY`, and `1` otherwise.
+Exit code is `0` if every processed experiment is `COMPLETE` or `EMPTY`, and `1` otherwise; archiving/deletion outcome (see below) does not affect it.
+
+## Archiving and deletion (`-a`/`--archive`, `-d`/`--delete`)
+
+With `-a/--archive`, each experiment's directory is tar+gzipped regardless of its download STATUS, and one of these is printed:
+
+| Archive STATUS | Meaning |
+| --- | --- |
+| `COMPLETE` | The tarball was written successfully. |
+| `SKIPPED` | An archive already exists at that path; it is left untouched. |
+| `FAILURE` | An error occurred while writing the tarball. |
+| `NONEXISTENT` | `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` does not exist (e.g., the download itself failed). |
+
+The tarball is written to a `.tmp` sibling and renamed into place only on success, so an interrupted run never leaves a partial archive behind. `-d/--delete` requires `-a/--archive` and only removes the experiment directory when the archive STATUS is `COMPLETE` or `SKIPPED`.
 
 ## Download log CSV (`-l`/`--log`)
 

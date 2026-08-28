@@ -13,8 +13,9 @@ Converts XNAT-downloaded sessions to BIDS via [`Dcm2Bids`](https://unfmontreal.g
     - If `<output>/PROJECT/sub-<PARTICIPANT>/ses-<SESSION>/` already has contents, prints a `WARNING:` line; the conversion proceeds with `--clobber`.
     - Invokes `dcm2bids -d <scans_dir> -p <PARTICIPANT> -s <SESSION> -c <CONFIG_FILE> -o <output>/PROJECT --clobber`.
 4. Sessions are processed serially or in parallel (`-n/--nconvert`); a one-line per-session status is printed, and a summary is printed at the end. With `-l/--log`, a CSV identical in shape to `download`'s log (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `<output>/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv` — the same `log/` directory used by `mriconfig`.
-5. With `-d/--delete`, after a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT` is removed (via `shutil.rmtree`). The `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result. `FAILURE` and `NONEXISTENT` sessions are left untouched. Deletion happens after the per-session log row is written, so the log still records what was converted before removal.
-6. After all sessions are processed, a dataset-wide `mriconvert_qc.tsv` is (re)written at `<output>/PROJECT-<PROJECT>_mriconvert_qc.tsv`, and the static data dictionary [`src/assets/mriconvert_qc.json`](https://github.com/nimh-dsst/xnat-bids-cli/blob/main/src/assets/mriconvert_qc.json) is copied alongside it as `<output>/PROJECT-<PROJECT>_mriconvert_qc.json`. See [`mriconvert_qc.tsv`](#mriconvert_qctsv) below.
+5. With `-a/--archive`, after each session's conversion attempt (regardless of STATUS), its `<input>/PROJECT/SUBJECT/EXPERIMENT` directory is tar+gzipped to `<input>/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz`. An existing archive at that path is left untouched and reported as `SKIPPED`.
+6. With `-d/--delete`, the session's input directory `<input>/PROJECT/SUBJECT/EXPERIMENT` is removed (via `shutil.rmtree`) once it is safely preserved: without `-a/--archive`, only when the session's conversion `STATUS` is `COMPLETE` or `EMPTY`; with `-a/--archive`, once that session's archive STATUS is `COMPLETE` or `SKIPPED`, regardless of conversion STATUS. The `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result. Deletion happens after the per-session log row (and any archive) is written, so the log still records what was converted before removal.
+7. After all sessions are processed, a dataset-wide `mriconvert_qc.tsv` is (re)written at `<output>/PROJECT-<PROJECT>_mriconvert_qc.tsv`, and the static data dictionary [`src/assets/mriconvert_qc.json`](https://github.com/nimh-dsst/xnat-bids-cli/blob/main/src/assets/mriconvert_qc.json) is copied alongside it as `<output>/PROJECT-<PROJECT>_mriconvert_qc.json`. See [`mriconvert_qc.tsv`](#mriconvert_qctsv) below.
 
 ```bash
 # One session
@@ -25,6 +26,9 @@ xnatcli mriconvert -i DOWNLOAD_DIR -s PROJECT SUBJECT -o OUTPUT_DIR -c PATH/TO/d
 
 # All sessions of all subjects in a project
 xnatcli mriconvert -i DOWNLOAD_DIR -p PROJECT -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json
+
+# All sessions of a project, then archive and delete each session's raw input
+xnatcli mriconvert -i DOWNLOAD_DIR -p PROJECT -o OUTPUT_DIR -c PATH/TO/dcm2bids_config.json -a -d
 ```
 
 ## Per-session STATUS (and exit code)
@@ -48,7 +52,8 @@ Exit code is `0` if every processed session is `COMPLETE` or `EMPTY`, and `1` ot
 | `-c`, `--config` | **Required** unless `-m/--maps` is given. Path to the `dcm2bids` config JSON (typically the one drafted by `xnatcli mriconfig`). Recorded as the top-level `Dcm2BidsConfigPath` key in `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.json`. If omitted, a `Dcm2BidsConfigPath` recorded on a prior run is preserved. |
 | `-n`, `--nconvert` | *Optional.* Number of parallel session conversions (default `1`). |
 | `-l`, `--log` | *Optional.* Write a per-session log CSV to `<output>/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv`. |
-| `-d`, `--delete` | *Optional.* After a session finishes with `STATUS=COMPLETE` or `STATUS=EMPTY`, delete its input directory `<input>/PROJECT/SUBJECT/EXPERIMENT`. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |
+| `-a`, `--archive` | *Optional.* For every session in scope, tar+gzip its `<input>/PROJECT/SUBJECT/EXPERIMENT` directory into `<input>/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz`. Existing archives are skipped with a warning. Runs regardless of the conversion outcome. |
+| `-d`, `--delete` | *Optional.* Delete each session's input directory `<input>/PROJECT/SUBJECT/EXPERIMENT` after it is safely preserved: without `-a/--archive`, only when `STATUS` is `COMPLETE` or `EMPTY`; with `-a/--archive`, after a successful archive regardless of conversion `STATUS`. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |
 | `-m`, `--maps` | *Optional.* Skip the `dcm2bids` conversion and only (re)generate `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.tsv` (and copy `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.json`) for every project in scope from the already-converted BIDS data under `OUTPUT_DIR`. `-c/--config`, `pydicom`, `dcm2bids`, and `dcm2niix` are not required. |
 | `-y`, `--physio` | *Optional.* Absolute path to the flat directory holding all raw physio recordings for this project. Recorded as the top-level `PhysioParent` key in `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.json` for [`xnatcli physioconvert`](physioconvert.md) to resolve `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.tsv`'s `physio` column against. If omitted, a `PhysioParent` recorded on a prior run is preserved. |
 
