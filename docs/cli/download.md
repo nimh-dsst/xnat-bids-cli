@@ -27,7 +27,7 @@ xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR -a -d
 | Argument | Description |
 | --- | --- |
 | `-1 PROJECT SUBJECT EXPERIMENT` | Download a single experiment. Each value may be either the XNAT ID or the user-facing label. |
-| `-c`, `--csv`, `-i`, `--input` | Path to a CSV file (`xnatcli query` output) listing experiments to download. Must contain the columns `PROJECT`, `SUBJECT_LABEL`, `EXPERIMENT_LABEL`; any other columns (e.g., `SUBJECT_ID`, `EXPERIMENT_ID`, `EXPERIMENT_DATE`) are ignored. |
+| `-c`, `--csv`, `-i`, `--input` | Path to a CSV file (`xnatcli query` output) listing experiments to download. Must contain the columns `PROJECT`, `SUBJECT_LABEL`, `EXPERIMENT_LABEL`. An `ESTIMATED_SIZE_BYTES` column, if present, drives the per-experiment progress display below; any other columns (e.g., `SUBJECT_ID`, `EXPERIMENT_ID`, `EXPERIMENT_DATE`) are ignored. |
 | `-o`, `--output` | **Required.** Directory to write the downloaded files into (created if missing). |
 | `-n`, `--ndownload` | *Optional.* Number of parallel experiment downloads for `--csv` (default `1`). Not used with `-1`. |
 | `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start). |
@@ -59,6 +59,16 @@ With `-a/--archive`, each experiment's directory is tar+gzipped regardless of it
 | `NONEXISTENT` | `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` does not exist (e.g., the download itself failed). |
 
 The tarball is written to a `.tmp` sibling and renamed into place only on success, so an interrupted run never leaves a partial archive behind. `-d/--delete` requires `-a/--archive` and only removes the experiment directory when the archive STATUS is `COMPLETE` or `SKIPPED`.
+
+## Download progress (`--csv` mode)
+
+Each experiment being downloaded under `--csv`/`--input` (regardless of `-n`) has its own background thread that prints a status line roughly every 5 seconds while its scans/resources zip download is in flight:
+
+```text
+  [PROJECT/SUBJECT/EXPERIMENT] 45.0% (120.0 MB / 265.0 MB est.)
+```
+
+The percentage and total are only shown when that row's `ESTIMATED_SIZE_BYTES` (from the input CSV — see `xnatcli query`) is present and non-zero; otherwise the line shows only the bytes downloaded so far. Progress is measured by polling the size of the in-progress zip file(s) on disk under `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, so it climbs across the scans phase and then the session-resources phase, and stops once the experiment finishes (or fails). Under `-n`, multiple experiments' lines interleave as separate prints — there's no single combined bar. This progress display does not apply to `-1` single-experiment mode.
 
 ## Download log CSV (`-l`/`--log`)
 

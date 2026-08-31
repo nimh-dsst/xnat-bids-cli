@@ -21,7 +21,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 
 - [ ] Deleting/renaming `credentials.cfg` and running `xnatcli query` exits with a message to run `xnatcli login`
 - [ ] A `credentials.cfg` missing the `[xnatcli]` section (or a required key) exits with a message to re-run `xnatcli login`
-- [ ] `xnatcli query PROJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>.csv` with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE` and one row per experiment in the project
+- [ ] `xnatcli query PROJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>.csv` with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE,ESTIMATED_SIZE_BYTES` and one row per experiment in the project
 - [ ] `xnatcli query PROJECT SUBJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_SUBJECT-<SUBJECT>.csv` scoped to that subject's experiments only
 - [ ] Supplying a project by its XNAT ID and, separately, by its label both resolve to the same project
 - [ ] Supplying a subject by its XNAT ID and, separately, by its label both resolve to the same subject
@@ -29,6 +29,12 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] A valid `PROJECT` with a nonexistent `SUBJECT` exits with an error and no CSV is written
 - [ ] A project (or subject) that exists but has zero experiments writes a header-only CSV
 - [ ] `EXPERIMENT_DATE` is populated as `YYYYMMDD` when set on the server, and blank when unset/unparseable
+- [ ] `ESTIMATED_SIZE_BYTES` matches the sum of `Size` across `.../experiments/<ID>/files?format=json` for that experiment
+- [ ] If the per-experiment `/files` lookup fails (e.g. a permissions error), that row's `ESTIMATED_SIZE_BYTES` is blank (not `0`), a `Warning:` is printed to stderr, and the run still completes and writes the CSV
+- [ ] An experiment with genuinely zero files shows `ESTIMATED_SIZE_BYTES=0`
+- [ ] An experiment whose files all report a missing/empty `Size` shows `ESTIMATED_SIZE_BYTES=FILES_WITH_UNLABELED_SIZE` (not `0`)
+- [ ] An experiment with at least one non-numeric `Size` value (and no valid ones) shows `ESTIMATED_SIZE_BYTES=UNPARSEABLE_SIZE_VALUES` (not `0`)
+- [ ] An experiment with a mix of valid and unlabeled/unparseable `Size` values shows the sum of just the valid ones (not a categorical string)
 - [ ] Running the same query twice silently overwrites the existing output CSV
 - [ ] Omitting `-o/--output` fails with an argparse "required" error
 - [ ] `OUTPUT_DIR` that does not yet exist is created
@@ -48,6 +54,10 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Batch mode exits `0` when every row is `COMPLETE` or `EMPTY`
 - [ ] `-n/--ndownload 4` on `-1` mode parallelizes per-file downloads and produces the same file set as `-n 1`
 - [ ] `-n/--ndownload 4` on `--csv` mode parallelizes per-experiment downloads and produces the same file set as `-n 1`
+- [ ] `--csv` mode (`-n 1` or higher) prints a per-experiment progress line roughly every 5 seconds while a download is in flight, e.g. `[PROJECT/SUBJECT/EXPERIMENT] 45.0% (120.0 MB / 265.0 MB est.)`
+- [ ] When the input CSV's `ESTIMATED_SIZE_BYTES` cell is blank/non-numeric for a row, that row's progress line shows only bytes downloaded (no `%`/`est.` total)
+- [ ] Under `-n 4`, multiple experiments' progress lines interleave in the output without garbling (one full line per print, no truncation/overlap)
+- [ ] Progress reporting stops (no further lines for that experiment) once its scans+resources download finishes, and does not delay the run's completion
 - [ ] `-l/--log` writes `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS` and one row per processed experiment
 - [ ] Without `-l/--log`, no `log/` directory is created
 - [ ] `-a/--archive` produces `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz` after each experiment downloads

@@ -121,6 +121,75 @@ def _describe_download_error(e: Exception) -> str:
     return str(e)
 
 
+def _human_bytes(n: float) -> str:
+    """Format a byte count for display, e.g. ``1536`` -> ``"1.5 KB"``."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024.0:
+            return f"{n:3.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} PB"
+
+
+class _ExperimentProgress:
+    """Tracks bytes downloaded so far for one experiment's zip transfers.
+
+    XNAT's zip-export endpoint is fetched as two sequential whole-archive
+    downloads (scans, then session-level resources); each one is written
+    directly to its final path with incremental flushing, so at most one
+    in-progress zip exists under the experiment directory at a time. This
+    tracks the completed phase's byte count plus whatever is currently
+    on disk, so reported progress climbs across both phases instead of
+    resetting to zero when the scans zip is extracted and deleted.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._completed_bytes = 0
+
+    def add_completed(self, n: int) -> None:
+        with self._lock:
+            self._completed_bytes += n
+
+    def current_bytes(self, experiment_root: Path) -> int:
+        in_flight = 0
+        try:
+            for p in experiment_root.glob("*.zip"):
+                try:
+                    in_flight += p.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        with self._lock:
+            return self._completed_bytes + in_flight
+
+
+def _report_progress(
+    label: str,
+    experiment_root: Path,
+    estimated_total: int | None,
+    progress: _ExperimentProgress,
+    stop_event: threading.Event,
+    interval: float = 5.0,
+) -> None:
+    """Print a periodic download-progress line for one experiment until stopped.
+
+    Runs in its own thread, polling every `interval` seconds; one such
+    thread runs per experiment currently downloading, so under `-n` each
+    active worker prints its own interleaved status lines.
+    """
+    while not stop_event.wait(interval):
+        downloaded = progress.current_bytes(experiment_root)
+        if estimated_total:
+            pct = min(100.0, downloaded / estimated_total * 100)
+            _safe_print(
+                f"  [{label}] {pct:5.1f}% "
+                f"({_human_bytes(downloaded)} / {_human_bytes(estimated_total)} est.)"
+            )
+        else:
+            _safe_print(f"  [{label}] {_human_bytes(downloaded)} downloaded")
+
+
 def _zip_wrapper_prefix(names: list[str]) -> str:
     """Return the shared top-level path segment across all zip members, if any.
 
@@ -161,6 +230,7 @@ def _process_experiment(
     experiment: str,
     output_dir: Path,
     report: Callable[[str], None],
+    progress: _ExperimentProgress | None = None,
 ) -> str:
     """Download one experiment as whole-experiment zip archives.
 
@@ -192,8 +262,10 @@ def _process_experiment(
     failed = False
 
     try:
-        zip_path = exp_obj.scans().download(str(experiment_root), extract=False)
-        _extract_zip_flattened(Path(zip_path), experiment_root)
+        zip_path = Path(exp_obj.scans().download(str(experiment_root), extract=False))
+        if progress is not None:
+            progress.add_completed(zip_path.stat().st_size)
+        _extract_zip_flattened(zip_path, experiment_root)
         got_scans = True
     except LookupError:
         pass  # no scans on this experiment
@@ -202,10 +274,12 @@ def _process_experiment(
         failed = True
 
     try:
-        zip_path = downloadutils.download(
+        zip_path = Path(downloadutils.download(
             str(experiment_root), exp_obj.resources(), extract=False
-        )
-        _extract_zip_flattened(Path(zip_path), experiment_root)
+        ))
+        if progress is not None:
+            progress.add_completed(zip_path.stat().st_size)
+        _extract_zip_flattened(zip_path, experiment_root)
         got_resources = True
     except LookupError:
         pass  # no session-level resources on this experiment
@@ -220,10 +294,10 @@ def _process_experiment(
     return STATUS_COMPLETE
 
 
-def _read_csv_rows(path: Path) -> list[tuple[str, str, str]]:
+def _read_csv_rows(path: Path) -> list[tuple[str, str, str, int | None]]:
     if not path.exists():
         sys.exit(f"Error: input CSV not found: {path}")
-    rows: list[tuple[str, str, str]] = []
+    rows: list[tuple[str, str, str, int | None]] = []
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
         required = {"PROJECT", "SUBJECT_LABEL", "EXPERIMENT_LABEL"}
@@ -240,7 +314,14 @@ def _read_csv_rows(path: Path) -> list[tuple[str, str, str]]:
                 sys.exit(
                     f"Error: row {i} of {path} is missing a required value."
                 )
-            rows.append((p, s, e))
+            raw_size = (row.get("ESTIMATED_SIZE_BYTES") or "").strip()
+            estimated_size: int | None = None
+            if raw_size:
+                try:
+                    estimated_size = int(raw_size)
+                except ValueError:
+                    estimated_size = None
+            rows.append((p, s, e, estimated_size))
     return rows
 
 
@@ -307,7 +388,7 @@ def _run_csv(
     server: str,
     user: str,
     password: str,
-    rows: list[tuple[str, str, str]],
+    rows: list[tuple[str, str, str, int | None]],
     output_dir: Path,
     n_parallel_experiments: int,
     log_writer: _LogWriter,
@@ -321,11 +402,27 @@ def _run_csv(
         STATUS_EMPTY: 0,
     }
 
-    def _worker(triplet: tuple[str, str, str]) -> str:
-        p, s, e = triplet
+    def _worker(row: tuple[str, str, str, int | None]) -> str:
+        p, s, e, estimated_size = row
         iface = _get_thread_interface(server, user, password)
-        start = _logging_now()
-        status = _process_experiment(iface, p, s, e, output_dir, _safe_print)
+        label = f"{p}/{s}/{e}"
+        experiment_root = output_dir / p / s / e
+        progress = _ExperimentProgress()
+        stop_event = threading.Event()
+        monitor = threading.Thread(
+            target=_report_progress,
+            args=(label, experiment_root, estimated_size, progress, stop_event),
+            daemon=True,
+        )
+        monitor.start()
+        try:
+            start = _logging_now()
+            status = _process_experiment(
+                iface, p, s, e, output_dir, _safe_print, progress
+            )
+        finally:
+            stop_event.set()
+            monitor.join()
         log_writer.write(start, p, s, e, status)
         _archive_and_maybe_delete(
             output_dir, p, s, e, do_archive, do_delete, _safe_print
