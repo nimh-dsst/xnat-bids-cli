@@ -80,6 +80,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory to write the downloaded files into.",
     )
     download_parser.add_argument(
+        "--rename-subject",
+        metavar="SUBJECT_BIDS_RENAME",
+        help="Only with -1. Rename the on-disk SUBJECT directory to this "
+        "value ('sub-' is prepended if missing); XNAT is still queried "
+        "using the original SUBJECT label.",
+    )
+    download_parser.add_argument(
+        "--rename-experiment",
+        metavar="EXPERIMENT_BIDS_RENAME",
+        help="Only with -1. Rename the on-disk EXPERIMENT directory to this "
+        "value ('ses-' is prepended if missing); XNAT is still queried "
+        "using the original EXPERIMENT label.",
+    )
+    download_parser.add_argument(
         "-n",
         "--ndownload",
         type=int,

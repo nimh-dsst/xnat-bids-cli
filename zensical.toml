@@ -11,8 +11,9 @@ Copyright &copy; 2026 NIMH Data Science and Sharing Team
 
 nav = [
   { "Overview" = "index.md" },
-  { "Quick Start" = "quickstart.md" },
   { "Installation" = "installation.md" },
+  { "Quick Start" = "quickstart.md" },
+  { "Manual Interventions" = "manual.md" },
   { "Design" = "design.md" },
   { "CLI Reference" = [
       { "xnatcli login" = "cli/login.md" },

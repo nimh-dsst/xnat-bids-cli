@@ -21,8 +21,9 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 
 - [ ] Deleting/renaming `credentials.cfg` and running `xnatcli query` exits with a message to run `xnatcli login`
 - [ ] A `credentials.cfg` missing the `[xnatcli]` section (or a required key) exits with a message to re-run `xnatcli login`
-- [ ] `xnatcli query PROJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>.csv` with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE,ESTIMATED_SIZE_BYTES` and one row per experiment in the project
-- [ ] `xnatcli query PROJECT SUBJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_SUBJECT-<SUBJECT>.csv` scoped to that subject's experiments only
+- [ ] `xnatcli query PROJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_<YYYYMMDD_HHMMSS>.csv` with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,SUBJECT_BIDS_RENAME,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE,EXPERIMENT_BIDS_RENAME,ESTIMATED_SIZE_BYTES` and one row per experiment in the project
+- [ ] `SUBJECT_BIDS_RENAME` and `EXPERIMENT_BIDS_RENAME` are always written blank
+- [ ] `xnatcli query PROJECT SUBJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_SUBJECT-<SUBJECT>_<YYYYMMDD_HHMMSS>.csv` scoped to that subject's experiments only
 - [ ] Supplying a project by its XNAT ID and, separately, by its label both resolve to the same project
 - [ ] Supplying a subject by its XNAT ID and, separately, by its label both resolve to the same subject
 - [ ] A nonexistent `PROJECT` exits with an error and no CSV is written
@@ -35,7 +36,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] An experiment whose files all report a missing/empty `Size` shows `ESTIMATED_SIZE_BYTES=FILES_WITH_UNLABELED_SIZE` (not `0`)
 - [ ] An experiment with at least one non-numeric `Size` value (and no valid ones) shows `ESTIMATED_SIZE_BYTES=UNPARSEABLE_SIZE_VALUES` (not `0`)
 - [ ] An experiment with a mix of valid and unlabeled/unparseable `Size` values shows the sum of just the valid ones (not a categorical string)
-- [ ] Running the same query twice silently overwrites the existing output CSV
+- [ ] Running the same query twice in quick succession writes two distinct, differently-timestamped CSVs rather than overwriting the first
 - [ ] Omitting `-o/--output` fails with an argparse "required" error
 - [ ] `OUTPUT_DIR` that does not yet exist is created
 
@@ -49,6 +50,10 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] `-1` accepts XNAT IDs interchangeably with user-facing labels for `PROJECT`, `SUBJECT`, `EXPERIMENT`
 - [ ] `-1` on a nonexistent triplet reports `STATUS=NONEXISTENT` and exits `1`
 - [ ] `-1` on an experiment with zero files reports `STATUS=EMPTY` and exits `0`
+- [ ] `-1 ... --rename-subject 01` downloads to `OUTPUT_DIR/PROJECT/sub-01/EXPERIMENT/` (prefix prepended) while still querying XNAT using the original `SUBJECT`; `--rename-subject sub-01` behaves the same without double-prefixing
+- [ ] `-1 ... --rename-experiment baseline` similarly renames only the `EXPERIMENT` directory level (`ses-` prepended if missing), on disk and in `-a/--archive`/`-l/--log` output
+- [ ] `-1 ... --rename-subject 01-bad` (non-alphanumeric after the prefix) exits with an error before downloading
+- [ ] `--rename-subject`/`--rename-experiment` combined with `--csv` (instead of `-1`) exits with an error rather than being silently ignored
 - [ ] `--csv PATH/TO/QUERY.csv -o OUTPUT_DIR` (aliases `-c`, `-i`, `--input`) downloads every row from a `query`-produced CSV
 - [ ] Batch mode continues processing remaining rows after one row fails (`STATUS=FAILURE`/`PARTIAL`) and exits `1` with a summary
 - [ ] Batch mode exits `0` when every row is `COMPLETE` or `EMPTY`
@@ -60,6 +65,13 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Progress reporting stops (no further lines for that experiment) once its scans+resources download finishes, and does not delay the run's completion
 - [ ] `-l/--log` writes `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS` and one row per processed experiment
 - [ ] Without `-l/--log`, no `log/` directory is created
+- [ ] In `--csv` mode, filling in a row's `SUBJECT_BIDS_RENAME` (e.g. `01` or `sub-01`) downloads that experiment's files to `OUTPUT_DIR/PROJECT/sub-01/EXPERIMENT/` instead of `OUTPUT_DIR/PROJECT/SUBJECT_LABEL/EXPERIMENT/`, while still querying XNAT using the original `SUBJECT_LABEL`
+- [ ] Filling in a row's `EXPERIMENT_BIDS_RENAME` (e.g. `baseline` or `ses-baseline`) similarly renames only the `EXPERIMENT` directory level, on disk and in `-a/--archive` filenames
+- [ ] Leaving both `SUBJECT_BIDS_RENAME` and `EXPERIMENT_BIDS_RENAME` blank for a row downloads using the original `SUBJECT_LABEL`/`EXPERIMENT_LABEL` with no renaming
+- [ ] Filling in only one of `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` for a row renames just that level; the blank one passes through unchanged
+- [ ] A `SUBJECT_BIDS_RENAME` or `EXPERIMENT_BIDS_RENAME` value that is non-alphanumeric after stripping an optional `sub-`/`ses-` prefix (e.g. `01-x`) exits with an error before any row downloads, naming the offending row/value
+- [ ] With `-l/--log`, a renamed row's log `SUBJECT`/`EXPERIMENT` columns show the renamed (on-disk) values, not the original `SUBJECT_LABEL`/`EXPERIMENT_LABEL`
+- [ ] `-1` single-experiment mode ignores `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` entirely (no CSV involved)
 - [ ] `-a/--archive` produces `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz` after each experiment downloads
 - [ ] Re-running with `-a/--archive` against an experiment whose archive already exists skips archiving with a warning (does not overwrite)
 - [ ] `-d/--delete` without `-a/--archive` fails immediately with "requires -a/--archive"

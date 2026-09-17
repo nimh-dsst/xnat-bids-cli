@@ -1,12 +1,13 @@
 import argparse
 import csv
+import os
 import shutil
 import sys
 import threading
 import time
 import zipfile
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
 
@@ -28,13 +29,95 @@ STATUS_EMPTY = "EMPTY"
 
 _OK_STATUSES = {STATUS_COMPLETE, STATUS_EMPTY}
 
-_print_lock = threading.Lock()
 _thread_iface = threading.local()
 
 
+def _enable_windows_ansi() -> None:
+    """Best-effort: turn on ANSI escape processing in legacy Windows consoles.
+
+    Windows Terminal and modern PowerShell already interpret these
+    sequences; this only matters for cmd.exe/conhost, which needs the
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING console mode flag set explicitly.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)  # VT processing
+    except Exception:
+        pass
+
+
+class _ProgressBoard:
+    """Keeps each active experiment's download-progress line updating in place.
+
+    Backed by ANSI cursor-movement escapes so `-n`'s concurrent downloads
+    each get one persistently-updating line instead of a fresh line every
+    interval. Falls back to plain sequential prints when stdout isn't a
+    terminal (e.g. redirected to a file), since in-place redraws wouldn't
+    render there anyway.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._lines: dict[str, str] = {}
+        self._rendered = 0
+        self._enabled = sys.stdout.isatty()
+        if self._enabled:
+            _enable_windows_ansi()
+
+    def update(self, label: str, text: str) -> None:
+        """Set (or add) `label`'s line to `text` and repaint the board."""
+        with self._lock:
+            if not self._enabled:
+                print(text)
+                return
+            self._lines[label] = text
+            self._redraw()
+
+    def finish(self, label: str) -> None:
+        """Remove `label`'s line once that experiment stops downloading."""
+        with self._lock:
+            if self._lines.pop(label, None) is not None and self._enabled:
+                self._redraw()
+
+    def log(self, msg: str) -> None:
+        """Print a normal message above the progress block, then redraw it."""
+        with self._lock:
+            if not self._enabled:
+                print(msg)
+                return
+            if self._rendered:
+                sys.stdout.write(f"\x1b[{self._rendered}A\x1b[0J")
+            sys.stdout.write(msg + "\n")
+            self._rendered = 0
+            self._redraw()
+
+    def _redraw(self) -> None:
+        """Repaint the progress block in place. Caller holds `self._lock`."""
+        if self._rendered:
+            sys.stdout.write(f"\x1b[{self._rendered}A")
+        for text in self._lines.values():
+            sys.stdout.write(f"\r\x1b[K{text}\n")
+        extra = self._rendered - len(self._lines)
+        if extra > 0:
+            for _ in range(extra):
+                sys.stdout.write("\x1b[K\n")
+            sys.stdout.write(f"\x1b[{extra}A")
+        self._rendered = len(self._lines)
+        sys.stdout.flush()
+
+
+_board = _ProgressBoard()
+
+
 def _safe_print(msg: str) -> None:
-    with _print_lock:
-        print(msg)
+    _board.log(msg)
 
 
 def _logging_now() -> str:
@@ -172,22 +255,27 @@ def _report_progress(
     stop_event: threading.Event,
     interval: float = 5.0,
 ) -> None:
-    """Print a periodic download-progress line for one experiment until stopped.
+    """Keep one download-progress line for this experiment updating in place.
 
     Runs in its own thread, polling every `interval` seconds; one such
     thread runs per experiment currently downloading, so under `-n` each
-    active worker prints its own interleaved status lines.
+    active worker keeps its own persistent line via `_board` (or, outside a
+    terminal, its own sequence of plain printed lines).
     """
-    while not stop_event.wait(interval):
-        downloaded = progress.current_bytes(experiment_root)
-        if estimated_total:
-            pct = min(100.0, downloaded / estimated_total * 100)
-            _safe_print(
-                f"  [{label}] {pct:5.1f}% "
-                f"({_human_bytes(downloaded)} / {_human_bytes(estimated_total)} est.)"
-            )
-        else:
-            _safe_print(f"  [{label}] {_human_bytes(downloaded)} downloaded")
+    try:
+        while not stop_event.wait(interval):
+            downloaded = progress.current_bytes(experiment_root)
+            if estimated_total:
+                pct = min(100.0, downloaded / estimated_total * 100)
+                text = (
+                    f"  [{label}] {pct:5.1f}% "
+                    f"({_human_bytes(downloaded)} / {_human_bytes(estimated_total)} est.)"
+                )
+            else:
+                text = f"  [{label}] {_human_bytes(downloaded)} downloaded"
+            _board.update(label, text)
+    finally:
+        _board.finish(label)
 
 
 def _zip_wrapper_prefix(names: list[str]) -> str:
@@ -231,6 +319,8 @@ def _process_experiment(
     output_dir: Path,
     report: Callable[[str], None],
     progress: _ExperimentProgress | None = None,
+    local_subject: str | None = None,
+    local_experiment: str | None = None,
 ) -> str:
     """Download one experiment as whole-experiment zip archives.
 
@@ -240,6 +330,11 @@ def _process_experiment(
     directory (stripping XNAT's own wrapper folder, see
     ``_extract_zip_flattened``), so the on-disk layout follows XNAT's own
     scan/resource folder naming without an extra EXPERIMENT/EXPERIMENT level.
+
+    `local_subject`/`local_experiment` (from `SUBJECT_BIDS_RENAME`/
+    `EXPERIMENT_BIDS_RENAME`) name the on-disk directory when they differ
+    from `subject`/`experiment`, which are always used to look up the
+    experiment on the XNAT server itself.
     """
     label = f"{project}/{subject}/{experiment}"
     try:
@@ -254,7 +349,9 @@ def _process_experiment(
         report(f"Error looking up {label}: {e}")
         return STATUS_FAILURE
 
-    experiment_root = output_dir / project / subject / experiment
+    experiment_root = (
+        output_dir / project / (local_subject or subject) / (local_experiment or experiment)
+    )
     experiment_root.mkdir(parents=True, exist_ok=True)
 
     got_scans = False
@@ -294,10 +391,24 @@ def _process_experiment(
     return STATUS_COMPLETE
 
 
-def _read_csv_rows(path: Path) -> list[tuple[str, str, str, int | None]]:
+def _format_bids_rename(value: str, prefix: str) -> str | None:
+    """Normalize a *_BIDS_RENAME cell, prepending `prefix` if not already present.
+
+    Returns None if the value (after stripping an already-present prefix) is
+    not purely alphanumeric, signaling an invalid rename value.
+    """
+    remainder = value[len(prefix):] if value.startswith(prefix) else value
+    if not remainder.isalnum():
+        return None
+    return value if value.startswith(prefix) else prefix + value
+
+
+def _read_csv_rows(
+    path: Path,
+) -> list[tuple[str, str, str, int | None, str | None, str | None]]:
     if not path.exists():
         sys.exit(f"Error: input CSV not found: {path}")
-    rows: list[tuple[str, str, str, int | None]] = []
+    rows: list[tuple[str, str, str, int | None, str | None, str | None]] = []
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
         required = {"PROJECT", "SUBJECT_LABEL", "EXPERIMENT_LABEL"}
@@ -321,7 +432,32 @@ def _read_csv_rows(path: Path) -> list[tuple[str, str, str, int | None]]:
                     estimated_size = int(raw_size)
                 except ValueError:
                     estimated_size = None
-            rows.append((p, s, e, estimated_size))
+
+            subject_rename: str | None = None
+            raw_subject_rename = (row.get("SUBJECT_BIDS_RENAME") or "").strip()
+            if raw_subject_rename:
+                subject_rename = _format_bids_rename(raw_subject_rename, "sub-")
+                if subject_rename is None:
+                    sys.exit(
+                        f"Error: row {i} of {path} has an invalid "
+                        f"SUBJECT_BIDS_RENAME value '{raw_subject_rename}': "
+                        "must be alphanumeric only (after an optional "
+                        "'sub-' prefix)."
+                    )
+
+            experiment_rename: str | None = None
+            raw_experiment_rename = (row.get("EXPERIMENT_BIDS_RENAME") or "").strip()
+            if raw_experiment_rename:
+                experiment_rename = _format_bids_rename(raw_experiment_rename, "ses-")
+                if experiment_rename is None:
+                    sys.exit(
+                        f"Error: row {i} of {path} has an invalid "
+                        f"EXPERIMENT_BIDS_RENAME value '{raw_experiment_rename}': "
+                        "must be alphanumeric only (after an optional "
+                        "'ses-' prefix)."
+                    )
+
+            rows.append((p, s, e, estimated_size, subject_rename, experiment_rename))
     return rows
 
 
@@ -359,24 +495,29 @@ def _run_single(
     log_writer: _LogWriter,
     do_archive: bool,
     do_delete: bool,
+    local_subject: str | None = None,
+    local_experiment: str | None = None,
 ) -> str:
+    local_s = local_subject or subject
+    local_e = local_experiment or experiment
     iface = Interface(server=server, user=user, password=password)
     try:
         start = _logging_now()
         status = _process_experiment(
-            iface, project, subject, experiment, output_dir, _safe_print
+            iface, project, subject, experiment, output_dir, _safe_print,
+            local_subject=local_s, local_experiment=local_e,
         )
     finally:
         try:
             iface.disconnect()
         except Exception:
             pass
-    log_writer.write(start, project, subject, experiment, status)
+    log_writer.write(start, project, local_s, local_e, status)
     _archive_and_maybe_delete(
         output_dir,
         project,
-        subject,
-        experiment,
+        local_s,
+        local_e,
         do_archive,
         do_delete,
         _safe_print,
@@ -388,7 +529,7 @@ def _run_csv(
     server: str,
     user: str,
     password: str,
-    rows: list[tuple[str, str, str, int | None]],
+    rows: list[tuple[str, str, str, int | None, str | None, str | None]],
     output_dir: Path,
     n_parallel_experiments: int,
     log_writer: _LogWriter,
@@ -402,11 +543,13 @@ def _run_csv(
         STATUS_EMPTY: 0,
     }
 
-    def _worker(row: tuple[str, str, str, int | None]) -> str:
-        p, s, e, estimated_size = row
+    def _worker(row: tuple[str, str, str, int | None, str | None, str | None]) -> str:
+        p, s, e, estimated_size, subject_rename, experiment_rename = row
+        local_s = subject_rename or s
+        local_e = experiment_rename or e
         iface = _get_thread_interface(server, user, password)
         label = f"{p}/{s}/{e}"
-        experiment_root = output_dir / p / s / e
+        experiment_root = output_dir / p / local_s / local_e
         progress = _ExperimentProgress()
         stop_event = threading.Event()
         monitor = threading.Thread(
@@ -418,14 +561,15 @@ def _run_csv(
         try:
             start = _logging_now()
             status = _process_experiment(
-                iface, p, s, e, output_dir, _safe_print, progress
+                iface, p, s, e, output_dir, _safe_print, progress,
+                local_s, local_e,
             )
         finally:
             stop_event.set()
             monitor.join()
-        log_writer.write(start, p, s, e, status)
+        log_writer.write(start, p, local_s, local_e, status)
         _archive_and_maybe_delete(
-            output_dir, p, s, e, do_archive, do_delete, _safe_print
+            output_dir, p, local_s, local_e, do_archive, do_delete, _safe_print
         )
         return status
 
@@ -433,14 +577,43 @@ def _run_csv(
         try:
             for triplet in rows:
                 counts[_worker(triplet)] += 1
+        except KeyboardInterrupt:
+            _board.log("\nInterrupted: stopping before starting the next experiment.")
+            sys.stdout.flush()
+            sys.exit(130)
         finally:
             _close_thread_interface()
     else:
-        with ThreadPoolExecutor(max_workers=n_parallel_experiments) as ex:
-            futures = [ex.submit(_worker, t) for t in rows]
-            for fut in as_completed(futures):
-                counts[fut.result()] += 1
-            # Worker threads' Interface objects are GC'd when the pool shuts down.
+        ex = ThreadPoolExecutor(max_workers=n_parallel_experiments)
+        pending = {ex.submit(_worker, t) for t in rows}
+        try:
+            while pending:
+                # A short timeout (rather than an unbounded wait) hands control
+                # back to the interpreter every 0.5s, which is what lets a
+                # pending Ctrl+C actually get raised here instead of sitting
+                # queued until the whole batch finishes.
+                done, pending = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    counts[fut.result()] += 1
+        except KeyboardInterrupt:
+            still_running = sum(1 for fut in pending if fut.running())
+            queued = len(pending) - still_running
+            for fut in pending:
+                fut.cancel()  # No-op for already-running futures.
+            _board.log(
+                f"\nInterrupted: {queued} queued download(s) cancelled; "
+                f"{still_running} already in progress were abandoned "
+                "mid-transfer (their output may be incomplete)."
+            )
+            sys.stdout.flush()
+            # ThreadPoolExecutor's worker threads are non-daemon, and CPython
+            # joins non-daemon threads on interpreter shutdown regardless of
+            # sys.exit()/exceptions — which is exactly what made Ctrl+C
+            # appear to do nothing while downloads already in flight kept
+            # running. os._exit() skips that join entirely.
+            os._exit(130)
+        ex.shutdown(wait=True)
+        # Worker threads' Interface objects are GC'd when the pool shuts down.
 
     return counts
 
@@ -454,6 +627,30 @@ def download_cmd(args: argparse.Namespace) -> int:
         )
     if args.delete and not args.archive:
         sys.exit("Error: -d/--delete requires -a/--archive.")
+    if args.triplet is None and (args.rename_subject or args.rename_experiment):
+        sys.exit(
+            "Error: --rename-subject/--rename-experiment only apply to "
+            "-1 downloads."
+        )
+
+    local_subject: str | None = None
+    if args.rename_subject:
+        local_subject = _format_bids_rename(args.rename_subject, "sub-")
+        if local_subject is None:
+            sys.exit(
+                f"Error: invalid --rename-subject value '{args.rename_subject}': "
+                "must be alphanumeric only (after an optional 'sub-' prefix)."
+            )
+
+    local_experiment: str | None = None
+    if args.rename_experiment:
+        local_experiment = _format_bids_rename(args.rename_experiment, "ses-")
+        if local_experiment is None:
+            sys.exit(
+                f"Error: invalid --rename-experiment value "
+                f"'{args.rename_experiment}': must be alphanumeric only "
+                "(after an optional 'ses-' prefix)."
+            )
 
     server, user, password = load_credentials()
     output_dir = Path(args.output)
@@ -482,6 +679,8 @@ def download_cmd(args: argparse.Namespace) -> int:
             log_writer,
             args.archive,
             args.delete,
+            local_subject,
+            local_experiment,
         )
         print(
             f"Status for {project}/{subject}/{experiment}: {status}"

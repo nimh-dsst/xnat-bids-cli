@@ -7,13 +7,16 @@ Downloads every file belonging to one XNAT experiment (single-experiment mode, `
 3. For each experiment, walks `project → subject → experiment`, then issues two bulk zip requests against XNAT's REST API: one for all scans, one for all session-level resources.
 4. Each zip is extracted directly into `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, following XNAT's own scan/resource folder naming (not a custom path scheme), then discarded.
 
-    `PROJECT` is the canonical XNAT project ID; `SUBJECT` and `EXPERIMENT` are the user-facing labels emitted by `xnatcli query`.
+    `PROJECT` is the canonical XNAT project ID; `SUBJECT` and `EXPERIMENT` are the user-facing labels emitted by `xnatcli query`, unless overridden by that row's `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` values in `--csv` mode, or by `--rename-subject`/`--rename-experiment` in `-1` mode (see [Manual Interventions](../manual.md)) — XNAT is still queried using the original labels either way.
 
-5. With `-a/--archive`, after each experiment is downloaded, its `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory is tar+gzipped to `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz`. An existing archive at that path is left untouched and reported as `SKIPPED`. With `-d/--delete` (requires `-a/--archive`), the `EXPERIMENT` directory is removed once its archive is `COMPLETE` or `SKIPPED`; the `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result.
+5. With `-a/--archive`, after each experiment is downloaded, its `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory (using any rename override) is tar+gzipped to `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz`. An existing archive at that path is left untouched and reported as `SKIPPED`. With `-d/--delete` (requires `-a/--archive`), the `EXPERIMENT` directory is removed once its archive is `COMPLETE` or `SKIPPED`; the `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result.
 
 ```bash
 # Single experiment
 xnatcli download -1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR
+
+# Single experiment, renamed on disk
+xnatcli download -1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR --rename-subject 01 --rename-experiment baseline
 
 # Batch from a query CSV
 xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR
@@ -27,7 +30,9 @@ xnatcli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR -a -d
 | Argument | Description |
 | --- | --- |
 | `-1 PROJECT SUBJECT EXPERIMENT` | Download a single experiment. Each value may be either the XNAT ID or the user-facing label. |
-| `-c`, `--csv`, `-i`, `--input` | Path to a CSV file (`xnatcli query` output) listing experiments to download. Must contain the columns `PROJECT`, `SUBJECT_LABEL`, `EXPERIMENT_LABEL`. An `ESTIMATED_SIZE_BYTES` column, if present, drives the per-experiment progress display below; any other columns (e.g., `SUBJECT_ID`, `EXPERIMENT_ID`, `EXPERIMENT_DATE`) are ignored. |
+| `--rename-subject` | *Optional, `-1` only.* Rename the on-disk `SUBJECT` directory to this value (`sub-` prepended if missing) — see [Manual Interventions](../manual.md). Errors with `--csv`. |
+| `--rename-experiment` | *Optional, `-1` only.* Rename the on-disk `EXPERIMENT` directory to this value (`ses-` prepended if missing) — see [Manual Interventions](../manual.md). Errors with `--csv`. |
+| `-c`, `--csv`, `-i`, `--input` | Path to a CSV file (`xnatcli query` output) listing experiments to download. Must contain the columns `PROJECT`, `SUBJECT_LABEL`, `EXPERIMENT_LABEL`. An `ESTIMATED_SIZE_BYTES` column, if present, drives the per-experiment progress display below. `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` columns, if present, rename the on-disk `SUBJECT`/`EXPERIMENT` directories — see [Manual Interventions](../manual.md). Any other columns (e.g., `SUBJECT_ID`, `EXPERIMENT_ID`, `EXPERIMENT_DATE`) are ignored. |
 | `-o`, `--output` | **Required.** Directory to write the downloaded files into (created if missing). |
 | `-n`, `--ndownload` | *Optional.* Number of parallel experiment downloads for `--csv` (default `1`). Not used with `-1`. |
 | `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start). |
@@ -62,13 +67,17 @@ The tarball is written to a `.tmp` sibling and renamed into place only on succes
 
 ## Download progress (`--csv` mode)
 
-Each experiment being downloaded under `--csv`/`--input` (regardless of `-n`) has its own background thread that prints a status line roughly every 5 seconds while its scans/resources zip download is in flight:
+Each experiment being downloaded under `--csv`/`--input` (regardless of `-n`) has its own background thread that updates a status line roughly every 5 seconds while its scans/resources zip download is in flight:
 
 ```text
   [PROJECT/SUBJECT/EXPERIMENT] 45.0% (120.0 MB / 265.0 MB est.)
 ```
 
-The percentage and total are only shown when that row's `ESTIMATED_SIZE_BYTES` (from the input CSV — see `xnatcli query`) is present and non-zero; otherwise the line shows only the bytes downloaded so far. Progress is measured by polling the size of the in-progress zip file(s) on disk under `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, so it climbs across the scans phase and then the session-resources phase, and stops once the experiment finishes (or fails). Under `-n`, multiple experiments' lines interleave as separate prints — there's no single combined bar. This progress display does not apply to `-1` single-experiment mode.
+The percentage and total are only shown when that row's `ESTIMATED_SIZE_BYTES` (from the input CSV — see `xnatcli query`) is present and non-zero; otherwise the line shows only the bytes downloaded so far. Progress is measured by polling the size of the in-progress zip file(s) on disk under `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, so it climbs across the scans phase and then the session-resources phase, and stops once the experiment finishes (or fails), at which point its line disappears. When stdout is a terminal, each experiment gets one line that updates in place (via ANSI cursor movement), so under `-n` you see one persistently-updating row per concurrently-downloading experiment rather than a new printed line every interval; other messages (errors, archive status) print normally above the progress rows. When stdout isn't a terminal (e.g. redirected to a file), this falls back to a plain new line per update. This progress display does not apply to `-1` single-experiment mode.
+
+## Stopping a run (Ctrl+C)
+
+In `--csv` mode with `-n` > 1, pressing Ctrl+C cancels every experiment that hasn't started downloading yet, then exits immediately — it does not wait for experiments already mid-transfer, since their zip download can't be cancelled cooperatively. Those in-flight experiments' output under `OUTPUT_DIR` may be left incomplete and should be re-run. With `-n 1` (the default) or `-1` single-experiment mode, Ctrl+C stops after the current experiment finishes.
 
 ## Download log CSV (`-l`/`--log`)
 
@@ -78,4 +87,4 @@ When `-l/--log` is supplied, a CSV is written at `OUTPUT_DIR/log/download_<YYYYM
 DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS
 ```
 
-`DATESTAMP` is the per-experiment download attempt begin time, formatted to match Python's `logging` module default `asctime` (`YYYY-MM-DD HH:MM:SS,mmm`, local time). One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
+`DATESTAMP` is the per-experiment download attempt begin time, formatted to match Python's `logging` module default `asctime` (`YYYY-MM-DD HH:MM:SS,mmm`, local time). `SUBJECT`/`EXPERIMENT` reflect any rename override (`SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` in `--csv` mode, `--rename-subject`/`--rename-experiment` in `-1` mode — see [Manual Interventions](../manual.md)), i.e. the on-disk directory names actually written under `OUTPUT_DIR`, not necessarily the original XNAT labels. One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.

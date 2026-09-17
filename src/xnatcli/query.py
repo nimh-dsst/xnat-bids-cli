@@ -97,7 +97,7 @@ def _collect_rows(
     interface: Interface,
     project: str,
     subject: str | None,
-) -> list[tuple[str, str, str, str, str, str, int | str | None]]:
+) -> list[tuple[str, str, str, str, str, str, str, str, int | str | None]]:
     proj_obj = interface.select.project(project)
     if not proj_obj.exists():
         sys.exit(
@@ -105,7 +105,7 @@ def _collect_rows(
         )
     canonical_project = proj_obj.id()
 
-    rows: list[tuple[str, str, str, str, str, str, int | str | None]] = []
+    rows: list[tuple[str, str, str, str, str, str, str, str, int | str | None]] = []
 
     if subject is None:
         subj_iter = proj_obj.subjects()
@@ -127,15 +127,17 @@ def _collect_rows(
                 canonical_project,
                 subj_label,
                 subj_id,
+                "",  # SUBJECT_BIDS_RENAME, left blank for manual entry
                 exp_label,
                 exp_obj.id(),
                 _experiment_date_yyyymmdd(exp_obj),
+                "",  # EXPERIMENT_BIDS_RENAME, left blank for manual entry
                 _experiment_size_bytes(
                     interface, exp_obj, f"{subj_label}/{exp_label}"
                 ),
             ))
 
-    rows.sort(key=lambda row: (row[1], row[3]))
+    rows.sort(key=lambda row: (row[1], row[4]))
 
     return rows
 
@@ -145,12 +147,6 @@ def query_cmd(args: argparse.Namespace) -> int:
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    if args.subject is None:
-        filename = f"PROJECT-{args.project}.csv"
-    else:
-        filename = f"PROJECT-{args.project}_SUBJECT-{args.subject}.csv"
-    output_path = output_dir / filename
 
     interface = None
     try:
@@ -167,15 +163,24 @@ def query_cmd(args: argparse.Namespace) -> int:
             except Exception:
                 pass
 
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.subject is None:
+        filename = f"PROJECT-{args.project}_{ts}.csv"
+    else:
+        filename = f"PROJECT-{args.project}_SUBJECT-{args.subject}_{ts}.csv"
+    output_path = output_dir / filename
+
     with output_path.open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
             "PROJECT",
             "SUBJECT_LABEL",
             "SUBJECT_ID",
+            "SUBJECT_BIDS_RENAME",
             "EXPERIMENT_LABEL",
             "EXPERIMENT_ID",
             "EXPERIMENT_DATE",
+            "EXPERIMENT_BIDS_RENAME",
             "ESTIMATED_SIZE_BYTES",
         ])
         writer.writerows(rows)

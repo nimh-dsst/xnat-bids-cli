@@ -26,13 +26,13 @@ Credentials verified and saved to ~/.xnatcli/credentials.cfg
 
 ```shell
 > uv run xnatcli query PROJECT_ID -o ~/data/xnat
-Wrote 100 row(s) to ~/data/xnat/PROJECT-PROJECT_ID.csv
+Wrote 100 row(s) to ~/data/xnat/PROJECT-PROJECT_ID_20260916_120000.csv
 ```
 
 ## 3. Downloading a project
 
 ```shell
-uv run xnatcli download -c ~/data/xnat/PROJECT-PROJECT_ID.csv -o ~/data/xnat -n 8 -l
+uv run xnatcli download -c ~/data/xnat/PROJECT-PROJECT_ID_20260916_120000.csv -o ~/data/xnat -n 8 -l
 ```
 
 This downloads all the experiments listed in the CSV file `PROJECT-PROJECT_ID.csv` to the directory `~/data/xnat`. The `-n 8` option specifies that 8 parallel downloads should be used, and the `-l` option indicates that the process should save logs.
