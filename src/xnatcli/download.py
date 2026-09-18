@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+import re
 import shutil
 import sys
 import threading
@@ -10,10 +11,11 @@ from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote
 
 import requests
 from pyxnat import Interface
-from pyxnat.core import downloadutils
+from pyxnat.core import uriutil
 
 from .archive import (
     OK_STATUSES as ARCHIVE_OK_STATUSES,
@@ -314,6 +316,117 @@ def _extract_zip_flattened(zip_path: Path, dest_dir: Path) -> None:
     zip_path.unlink(missing_ok=True)
 
 
+_CONTENT_DISPOSITION_FILENAME_RE = re.compile(
+    r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', re.IGNORECASE
+)
+
+
+def _filename_from_content_disposition(header: str) -> str | None:
+    """Pull a bare filename out of a Content-Disposition header, if present."""
+    match = _CONTENT_DISPOSITION_FILENAME_RE.search(header)
+    if not match:
+        return None
+    # unquote handles the percent-encoding an RFC 5987 filename* uses;
+    # Path(...).name strips any directory components a server might send.
+    name = Path(unquote(match.group(1).strip())).name
+    return name or None
+
+
+def _resource_identifier(resource) -> str:
+    """A filesystem-safe identifier for a pyxnat Resource, from its own URI."""
+    return Path(uriutil.uri_last(resource._uri)).name or "unknown"
+
+
+def _download_single_resource_zip(resource, dest_dir: Path) -> tuple[Path, str]:
+    """Download one named session-level resource as a zip archive.
+
+    Mirrors pyxnat's own ``Resource.get()`` (``.../resources/{ID}/files?format=zip``)
+    — the per-resource download XNAT actually supports; see ``_download_resources``
+    for why there's no bulk equivalent — but keeps the response's
+    ``Content-Disposition`` header around afterward for
+    ``_extract_zip_flattened_or_rescue``.
+    """
+    url = resource._uri + "/files?format=zip"
+    response = resource._intf.get(url, stream=True)
+    try:
+        if not response.ok:
+            raise RuntimeError(f"HTTP {response.status_code} {response.reason}")
+        content_disposition = response.headers.get("Content-Disposition", "")
+        zip_path = dest_dir / f"resource_{_resource_identifier(resource)}.zip"
+        with zip_path.open("wb") as f:
+            count = 0
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+                    count += 1
+                    if count % 10 == 0:
+                        f.flush()
+            f.flush()
+    finally:
+        response.close()
+    return zip_path, content_disposition
+
+
+def _download_resources(
+    exp_obj, dest_dir: Path, progress: "_ExperimentProgress | None"
+) -> None:
+    """Download and extract every session-level resource for an experiment.
+
+    XNAT has no bulk "download every resource at once" endpoint the way scans
+    do (``.../scans/ALL/files?format=zip``, where ``ALL`` is a scan-*type*
+    wildcard); the ``/resources`` collection has no ``.download()``/``.get()``
+    method in pyxnat at all — only the individual ``Resource`` element class
+    does, one resource at a time. This mirrors that real, working pattern via
+    ``_download_single_resource_zip``, and keeps going past one resource's
+    failure so a single bad resource doesn't lose the rest.
+
+    Raises LookupError if there are no session-level resources at all, or an
+    Exception summarizing every resource that failed, raised only after every
+    resource has been attempted (so successful ones still land on disk).
+    """
+    resources = list(exp_obj.resources())
+    if not resources:
+        raise LookupError("There are no resources to download")
+
+    errors: list[str] = []
+    for resource in resources:
+        try:
+            zip_path, content_disposition = _download_single_resource_zip(
+                resource, dest_dir
+            )
+            if progress is not None:
+                progress.add_completed(zip_path.stat().st_size)
+            _extract_zip_flattened_or_rescue(zip_path, dest_dir, content_disposition)
+        except Exception as e:
+            errors.append(
+                f"resource '{_resource_identifier(resource)}': "
+                f"{_describe_download_error(e)}"
+            )
+
+    if errors:
+        raise RuntimeError("; ".join(errors))
+
+
+def _extract_zip_flattened_or_rescue(
+    zip_path: Path, dest_dir: Path, content_disposition: str
+) -> None:
+    """Extract zip_path into dest_dir, rescuing XNAT's single-file quirk.
+
+    XNAT's zip-export endpoint is meant to always return a zip archive, but
+    when a session's resources resolve to exactly one file it sometimes
+    streams that file directly instead (a server-side behavior, not
+    specific to any one experiment). When the downloaded bytes don't open as
+    a zip, save them as that one file — named from the response's
+    Content-Disposition header, falling back to the temp file's own name —
+    instead of failing the whole experiment.
+    """
+    try:
+        _extract_zip_flattened(zip_path, dest_dir)
+    except zipfile.BadZipFile:
+        filename = _filename_from_content_disposition(content_disposition) or zip_path.stem
+        zip_path.replace(dest_dir / filename)
+
+
 def _process_experiment(
     interface: Interface,
     project: str,
@@ -327,12 +440,14 @@ def _process_experiment(
 ) -> str:
     """Download one experiment as whole-experiment zip archives.
 
-    Two bulk requests are made against XNAT's REST zip-export endpoint (one
-    for scans, one for session-level resources) via pyxnat, rather than one
-    HTTP request per file. Each zip is flattened into the experiment's output
-    directory (stripping XNAT's own wrapper folder, see
-    ``_extract_zip_flattened``), so the on-disk layout follows XNAT's own
-    scan/resource folder naming without an extra EXPERIMENT/EXPERIMENT level.
+    Bulk requests are made against XNAT's REST zip-export endpoint via
+    pyxnat, rather than one HTTP request per file: one for all scans, and
+    one per session-level resource (see ``_download_resources`` for why
+    resources can't be fetched in a single bulk request the way scans can).
+    Each zip is flattened into the experiment's output directory (stripping
+    XNAT's own wrapper folder, see ``_extract_zip_flattened``), so the
+    on-disk layout follows XNAT's own scan/resource folder naming without an
+    extra EXPERIMENT/EXPERIMENT level.
 
     `local_subject`/`local_experiment` (from `SUBJECT_BIDS_RENAME`/
     `EXPERIMENT_BIDS_RENAME`) name the on-disk directory when they differ
@@ -374,17 +489,12 @@ def _process_experiment(
         failed = True
 
     try:
-        zip_path = Path(downloadutils.download(
-            str(experiment_root), exp_obj.resources(), extract=False
-        ))
-        if progress is not None:
-            progress.add_completed(zip_path.stat().st_size)
-        _extract_zip_flattened(zip_path, experiment_root)
+        _download_resources(exp_obj, experiment_root, progress)
         got_resources = True
     except LookupError:
         pass  # no session-level resources on this experiment
     except Exception as e:
-        report(f"  Error downloading resources for {label}: {_describe_download_error(e)}")
+        report(f"  Error downloading resources for {label}: {e}")
         failed = True
 
     if failed:

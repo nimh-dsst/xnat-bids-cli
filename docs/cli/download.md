@@ -4,8 +4,8 @@ Downloads every file belonging to one XNAT experiment (single-experiment mode, `
 
 1. Loads credentials from `~/.xnatcli/credentials.cfg`; if the file is missing or incomplete, exits with a message telling you to run `xnatcli login`.
 2. Connects to the stored server via PyXNAT.
-3. For each experiment, walks `project → subject → experiment`, then issues two bulk zip requests against XNAT's REST API: one for all scans, one for all session-level resources.
-4. Each zip is extracted directly into `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, following XNAT's own scan/resource folder naming (not a custom path scheme), then discarded.
+3. For each experiment, walks `project → subject → experiment`, then issues zip requests against XNAT's REST API: one bulk request for all scans, and one request per session-level resource (XNAT has no bulk "all resources" export endpoint, unlike scans).
+4. Each zip is extracted directly into `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, following XNAT's own scan/resource folder naming (not a custom path scheme), then discarded. If a resource resolves to a single file, XNAT sometimes streams that file directly instead of wrapping it in a zip; this is detected and the file is saved as-is rather than failing the experiment. If some resources download successfully and others fail, the successful ones are still kept and the experiment is reported as `FAILURE` with each failing resource named in the error.
 
     `PROJECT` is the canonical XNAT project ID; `SUBJECT` and `EXPERIMENT` are the user-facing labels emitted by `xnatcli query`, unless overridden by that row's `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` values in `--csv` mode, or by `--rename-subject`/`--rename-experiment` in `-1` mode (see [Manual Interventions](../manual.md)) — XNAT is still queried using the original labels either way.
 
