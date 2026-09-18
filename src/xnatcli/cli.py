@@ -52,7 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     download_parser = subparsers.add_parser(
         "download",
-        help="Download every file from one XNAT experiment (-1) or many (--csv).",
+        help="Download every file from one XNAT experiment (-1), a unique "
+        "accession number (--accession), or many (--csv).",
     )
     download_source = download_parser.add_mutually_exclusive_group(required=True)
     download_source.add_argument(
@@ -62,6 +63,17 @@ def build_parser() -> argparse.ArgumentParser:
         metavar=("PROJECT", "SUBJECT", "EXPERIMENT"),
         help="Download a single experiment. Each value may be either the "
         "XNAT ID or the user-facing label.",
+    )
+    download_source.add_argument(
+        "--accession",
+        dest="accession",
+        metavar="ACCESSION",
+        help="Download by a single unique XNAT ID, with no PROJECT/SUBJECT "
+        "needed. If it identifies a subject, every experiment for that "
+        "subject is downloaded (--rename-experiment is not allowed, since "
+        "a subject may have more than one experiment). If it identifies an "
+        "experiment, only that one is downloaded. Must be an XNAT ID, not "
+        "a label (labels are only unique within their parent).",
     )
     download_source.add_argument(
         "-c",
@@ -82,16 +94,18 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument(
         "--rename-subject",
         metavar="SUBJECT_BIDS_RENAME",
-        help="Only with -1. Rename the on-disk SUBJECT directory to this "
-        "value ('sub-' is prepended if missing); XNAT is still queried "
-        "using the original SUBJECT label.",
+        help="Only with -1 or --accession. Rename the on-disk SUBJECT "
+        "directory to this value ('sub-' is prepended if missing); XNAT is "
+        "still queried using the original SUBJECT label.",
     )
     download_parser.add_argument(
         "--rename-experiment",
         metavar="EXPERIMENT_BIDS_RENAME",
-        help="Only with -1. Rename the on-disk EXPERIMENT directory to this "
-        "value ('ses-' is prepended if missing); XNAT is still queried "
-        "using the original EXPERIMENT label.",
+        help="Only with -1 or an experiment --accession (not a subject "
+        "accession, which may have more than one experiment). Rename the "
+        "on-disk EXPERIMENT directory to this value ('ses-' is prepended "
+        "if missing); XNAT is still queried using the original EXPERIMENT "
+        "label.",
     )
     download_parser.add_argument(
         "-n",
@@ -99,8 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         metavar="N",
-        help="Number of parallel experiment downloads for --csv input "
-        "(default 1). Not used with -1.",
+        help="Number of parallel experiment downloads for --csv input or a "
+        "subject --accession (default 1). Not used with -1.",
     )
     download_parser.add_argument(
         "-l",

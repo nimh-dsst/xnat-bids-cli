@@ -11,7 +11,7 @@ from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 import requests
 from pyxnat import Interface
@@ -731,19 +731,173 @@ def _run_csv(
     return counts
 
 
+def _resolve_accession(
+    interface: Interface, accession: str
+) -> tuple[str, str, str, str | None]:
+    """Resolve a unique XNAT accession number to its project/subject/experiment.
+
+    Tries `accession` as a subject ID, then as an experiment ID — XNAT IDs
+    are unique across the whole server regardless of datatype, so no
+    project needs to be known up front. pyxnat has no built-in server-wide
+    subject lookup (only ``select.project()``/``select.experiment()`` are
+    exposed at the root), so this reaches XNAT's root-level ``/subjects``
+    and ``/experiments`` listings directly via ``interface._get_json``, the
+    same primitive used elsewhere in this module for endpoints pyxnat
+    doesn't wrap.
+
+    Parameters
+    ----------
+    interface : Interface
+        Connected pyxnat interface.
+    accession : str
+        The unique XNAT ID to resolve. Not a label — labels are only
+        unique within their parent (subject labels within a project,
+        experiment labels within a subject), not server-wide.
+
+    Returns
+    -------
+    tuple[str, str, str, str | None]
+        ``("subject", project, subject_id, None)`` or
+        ``("experiment", project, subject_id, experiment_id)``.
+    """
+    interface._get_entry_point()
+    encoded = quote(accession, safe="")
+
+    try:
+        rows = interface._get_json(
+            f"{interface._entry}/subjects?ID={encoded}&columns=ID,project&format=json"
+        )
+        if rows:
+            return ("subject", rows[0]["project"], rows[0]["ID"], None)
+
+        rows = interface._get_json(
+            f"{interface._entry}/experiments?ID={encoded}"
+            "&columns=ID,project,subject_ID&format=json"
+        )
+        if rows:
+            return (
+                "experiment", rows[0]["project"], rows[0]["subject_ID"], rows[0]["ID"]
+            )
+    except Exception as e:
+        sys.exit(f"Error: could not resolve accession '{accession}': {e}")
+
+    sys.exit(
+        f"Error: accession '{accession}' not found as either a subject or "
+        "an experiment on the configured server."
+    )
+
+
+def _download_accession(
+    server: str,
+    user: str,
+    password: str,
+    accession: str,
+    output_dir: Path,
+    log_writer: _LogWriter,
+    do_archive: bool,
+    do_delete: bool,
+    n_parallel_experiments: int,
+    local_subject: str | None,
+    local_experiment: str | None,
+    log_path: Path | None,
+) -> int:
+    """Handle `download --accession`: resolve it, then delegate like -1/--csv.
+
+    A subject accession downloads every experiment belonging to that
+    subject (like `--csv` batch mode); an experiment accession downloads
+    just that one experiment (like `-1`).
+    """
+    interface = Interface(server=server, user=user, password=password)
+    try:
+        kind, project, subject_id, experiment_id = _resolve_accession(
+            interface, accession
+        )
+    finally:
+        try:
+            interface.disconnect()
+        except Exception:
+            pass
+
+    if kind == "subject":
+        if local_experiment is not None:
+            sys.exit(
+                f"Error: --rename-experiment cannot be used with subject "
+                f"accession '{accession}', since a subject may have more "
+                "than one experiment."
+            )
+        interface = Interface(server=server, user=user, password=password)
+        try:
+            subj_obj = interface.select.project(project).subject(subject_id)
+            experiment_labels = [e.label() for e in subj_obj.experiments()]
+        except Exception as e:
+            sys.exit(
+                f"Error: could not list experiments for subject accession "
+                f"'{accession}': {e}"
+            )
+        finally:
+            try:
+                interface.disconnect()
+            except Exception:
+                pass
+        if not experiment_labels:
+            sys.exit(
+                f"Error: subject accession '{accession}' has no experiments "
+                "to download."
+            )
+        rows = [
+            (project, subject_id, label, None, local_subject, None)
+            for label in experiment_labels
+        ]
+        counts = _run_csv(
+            server, user, password, rows, output_dir, n_parallel_experiments,
+            log_writer, do_archive, do_delete,
+        )
+        total = sum(counts.values())
+        print(f"\nProcessed {total} experiment(s) for subject accession {accession}:")
+        for status in (
+            STATUS_COMPLETE,
+            STATUS_FAILURE,
+            STATUS_NONEXISTENT,
+            STATUS_EMPTY,
+        ):
+            print(f"  {status}: {counts[status]}")
+        if log_path is not None:
+            print(f"Log written to {log_path}")
+        bad = counts[STATUS_FAILURE] + counts[STATUS_NONEXISTENT]
+        return 0 if bad == 0 else 1
+
+    status = _run_single(
+        server, user, password, project, subject_id, experiment_id,
+        output_dir, log_writer, do_archive, do_delete,
+        local_subject, local_experiment,
+    )
+    print(
+        f"Status for accession {accession} "
+        f"({project}/{subject_id}/{experiment_id}): {status}"
+    )
+    if log_path is not None:
+        print(f"Log written to {log_path}")
+    return 0 if status in _OK_STATUSES else 1
+
+
 def download_cmd(args: argparse.Namespace) -> int:
     if args.ndownload < 1:
         sys.exit("Error: -n/--ndownload must be >= 1.")
     if args.triplet is not None and args.ndownload != 1:
         sys.exit(
-            "Error: -n/--ndownload only applies to --csv/--input downloads."
+            "Error: -n/--ndownload only applies to --csv/--input or a "
+            "subject --accession."
         )
     if args.delete and not args.archive:
         sys.exit("Error: -d/--delete requires -a/--archive.")
-    if args.triplet is None and (args.rename_subject or args.rename_experiment):
+    if (
+        args.triplet is None
+        and args.accession is None
+        and (args.rename_subject or args.rename_experiment)
+    ):
         sys.exit(
             "Error: --rename-subject/--rename-experiment only apply to "
-            "-1 downloads."
+            "-1 or --accession downloads."
         )
 
     local_subject: str | None = None
@@ -801,6 +955,22 @@ def download_cmd(args: argparse.Namespace) -> int:
         if log_path is not None:
             print(f"Log written to {log_path}")
         return 0 if status in _OK_STATUSES else 1
+
+    if args.accession is not None:
+        return _download_accession(
+            server,
+            user,
+            password,
+            args.accession,
+            output_dir,
+            log_writer,
+            args.archive,
+            args.delete,
+            args.ndownload,
+            local_subject,
+            local_experiment,
+            log_path,
+        )
 
     rows = _read_csv_rows(Path(args.input))
     counts = _run_csv(
