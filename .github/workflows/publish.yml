@@ -1,0 +1,25 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # Required for PyPI trusted publishing (OIDC) — no API token needed.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # hatch-vcs needs full history/tags to compute the version.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Publish to PyPI
+        run: uv publish

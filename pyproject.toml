@@ -1,7 +1,27 @@
 [project]
-name = "xnatcli"
-version = "0.1.0"
+name = "xnatbidscli"
+dynamic = ["version"]
+description = "CLI for logging into XNAT, downloading neuroimaging experiments, and converting them to BIDS."
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Eric Earl", email = "eric.earl@nih.gov" },
+]
+maintainers = [
+    { name = "NIMH Data Science and Sharing Team", email = "nimhdsst@mail.nih.gov" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
 dependencies = [
     "bioread>=3",
     "cubids>=1.2.1",
@@ -15,12 +35,21 @@ dependencies = [
     "requests>=2",
 ]
 
+[project.urls]
+Homepage = "https://github.com/nimh-dsst/xnat-bids-cli"
+Documentation = "https://xnatbidscli.readthedocs.io/"
+Repository = "https://github.com/nimh-dsst/xnat-bids-cli"
+Issues = "https://github.com/nimh-dsst/xnat-bids-cli/issues"
+
 [project.scripts]
-xnatcli = "xnatcli.cli:main"
+xnatbidscli = "xnatbidscli.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 # phys2bids 2.10.0 caps numpy at <1.24, but nibabel>=5.4.2 needs numpy>=1.25.
 # phys2bids' own source uses no numpy APIs removed in 1.24+, so we override its
@@ -30,10 +59,10 @@ build-backend = "hatchling.build"
 override-dependencies = ["numpy>=1.25,<2"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/xnatcli"]
+packages = ["src/xnatbidscli"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/assets" = "xnatcli/assets"
+"src/assets" = "xnatbidscli/assets"
 
 [dependency-groups]
 dev = [
