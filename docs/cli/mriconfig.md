@@ -1,6 +1,6 @@
-# `xnatcli mriconfig`
+# `xnatbidscli mriconfig`
 
-Runs `dcm2bids_helper` (from [`Dcm2Bids`](https://unfmontreal.github.io/Dcm2Bids/)) on one or many downloaded XNAT experiment directories and drafts a project-level dcm2bids config. The input directory follows the layout produced by `xnatcli download` (`<input>/PROJECT/SUBJECT/EXPERIMENT/scans/...`).
+Runs `dcm2bids_helper` (from [`Dcm2Bids`](https://unfmontreal.github.io/Dcm2Bids/)) on one or many downloaded XNAT experiment directories and drafts a project-level dcm2bids config. The input directory follows the layout produced by `xnatbidscli download` (`<input>/PROJECT/SUBJECT/EXPERIMENT/scans/...`).
 
 1. Validates `--input` and verifies that both `dcm2bids_helper` and `dcm2niix` are on `PATH`.
 2. Resolves the set of experiments to process from one of the mutually exclusive selectors:
@@ -21,13 +21,13 @@ Runs `dcm2bids_helper` (from [`Dcm2Bids`](https://unfmontreal.github.io/Dcm2Bids
 
 ```bash
 # One experiment
-xnatcli mriconfig -i DOWNLOAD_DIR -1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR
+xnatbidscli mriconfig -i DOWNLOAD_DIR -1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR
 
 # All experiments of one subject, 4 in parallel
-xnatcli mriconfig -i DOWNLOAD_DIR -s PROJECT SUBJECT -o OUTPUT_DIR -n 4
+xnatbidscli mriconfig -i DOWNLOAD_DIR -s PROJECT SUBJECT -o OUTPUT_DIR -n 4
 
 # All experiments of all subjects in a project
-xnatcli mriconfig -i DOWNLOAD_DIR -p PROJECT -o OUTPUT_DIR
+xnatbidscli mriconfig -i DOWNLOAD_DIR -p PROJECT -o OUTPUT_DIR
 ```
 
 Per-experiment helper output is uniformly nested under `<target>/tmp_dcm2bids/helper/<EXPERIMENT>/` regardless of which selector was used. Multiple `mriconfig` invocations against the same project accumulate: each run refreshes the helper subdir(s) it touches (via `--force`) and re-drafts the project-level config by aggregating across **all** nested helper subdirectories present on disk.

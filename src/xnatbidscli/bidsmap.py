@@ -1,8 +1,8 @@
-"""Backs the ``xnatcli bidsmap`` command: participant/session mapping and a
+"""Backs the ``xnatbidscli bidsmap`` command: participant/session mapping and a
 rename-copy engine for a BIDS-shaped project directory produced by
-``xnatcli mriconvert``.
+``xnatbidscli mriconvert``.
 
-The xnatcli workflow is "convert" (raw source data -> BIDS via
+The xnatbidscli workflow is "convert" (raw source data -> BIDS via
 ``mriconvert``, with associated physio placed by ``physioconvert``) then
 "map" (raw BIDS -> renamed/mapped BIDS output, this module) — so the source
 data and the unmapped BIDS data are both preserved, and only the final copy
@@ -482,7 +482,7 @@ _EXCLUDE_QC_RATINGS = {"FAIL", "UNCERTAIN"}
 
 # Columns dropped from the output scans.tsv produced by bidsmap -o.
 # rename/physio: both have already been applied (rename to bids_name, physio
-# by xnatcli physioconvert, which must run before bidsmap -o).
+# by xnatbidscli physioconvert, which must run before bidsmap -o).
 _SCANS_DROP_COLS = frozenset({"rename", "physio"})
 
 

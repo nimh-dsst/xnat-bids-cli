@@ -13,14 +13,15 @@ from .query import query_cmd
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="xnatcli",
+        prog="xnatbidscli",
         description="Command-line client for XNAT servers.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     login_parser = subparsers.add_parser(
         "login",
-        help="Prompt for XNAT server, username, and password; verify; save to ~/.xnatcli/credentials.cfg.",
+        help="Prompt for XNAT server, username, and password; verify; save to "
+        "~/.xnatbidscli/credentials.cfg.",
     )
     login_parser.set_defaults(func=login_cmd)
 
@@ -82,7 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         dest="input",
         metavar="CSV_FILE",
-        help="Path to a CSV file (xnatcli query output) listing experiments to download.",
+        help="Path to a CSV file (xnatbidscli query output) listing experiments "
+        "to download.",
     )
     download_parser.add_argument(
         "-o",
@@ -152,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="INPUT_DIR",
         help="Root directory holding PROJECT/SUBJECT/EXPERIMENT "
-        "subdirectories (i.e., the output of `xnatcli download`).",
+        "subdirectories (i.e., the output of `xnatbidscli download`).",
     )
     mriconfig_source = (
         mriconfig_parser.add_mutually_exclusive_group(required=True)
@@ -232,8 +234,8 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="INPUT_DIR",
         help="Root directory holding PROJECT/SUBJECT/EXPERIMENT "
-        "subdirectories (i.e., the output of `xnatcli download`). The "
-        "directory names should match those written by `xnatcli download` "
+        "subdirectories (i.e., the output of `xnatbidscli download`). The "
+        "directory names should match those written by `xnatbidscli download` "
         "(XNAT IDs for the project, labels for subject and experiment).",
     )
     mriconvert_source = (
@@ -279,7 +281,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional absolute path to the flat directory holding all raw "
         "physio recordings for this project. Recorded as the top-level "
         "'PhysioParent' key in OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.json for "
-        "xnatcli physioconvert to resolve OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.tsv's "
+        "xnatbidscli physioconvert to resolve "
+        "OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.tsv's "
         "'physio' column against. If omitted, a PhysioParent recorded on a "
         "prior run is preserved.",
     )
@@ -288,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         metavar="CONFIG_FILE",
         help="Path to the dcm2bids config JSON to use (e.g., the one drafted "
-        "by `xnatcli mriconfig`). Required unless -m/--maps is given. "
+        "by `xnatbidscli mriconfig`). Required unless -m/--maps is given. "
         "Recorded as the top-level 'Dcm2BidsConfigPath' key (with a "
         "'LastModified' timestamp) in OUTPUT_DIR/PROJECT-<P>_mriconvert_qc.json. "
         "If omitted (only possible with -m/--maps), a Dcm2BidsConfigPath "
@@ -346,7 +349,7 @@ def build_parser() -> argparse.ArgumentParser:
     physioconvert_parser = subparsers.add_parser(
         "physioconvert",
         help="Convert physio recordings associated (via mriconvert_qc.tsv's "
-        "'physio' column) with an xnatcli mriconvert BIDS dataset, via "
+        "'physio' column) with an xnatbidscli mriconvert BIDS dataset, via "
         "phys2bids.",
     )
     physioconvert_parser.add_argument(
@@ -354,7 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         required=True,
         metavar="OUTPUT_DIR",
-        help="Same BIDS root xnatcli mriconvert wrote to (OUTPUT_DIR must hold "
+        help="Same BIDS root xnatbidscli mriconvert wrote to (OUTPUT_DIR must hold "
         "PROJECT-<P>_mriconvert_qc.tsv/PROJECT-<P>_mriconvert_qc.json). Physio "
         "outputs are written directly into "
         "OUTPUT_DIR/PROJECT/sub-X/ses-Y/<datatype>/ alongside the associated "
@@ -366,7 +369,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="PROJECT",
         help="Project directory name under OUTPUT_DIR identifying the BIDS "
-        "dataset produced by xnatcli mriconvert.",
+        "dataset produced by xnatbidscli mriconvert.",
     )
     physioconvert_parser.add_argument(
         "-n",
@@ -391,7 +394,7 @@ def build_parser() -> argparse.ArgumentParser:
     bidsmap_parser = subparsers.add_parser(
         "bidsmap",
         help="Generate (or update) a participant/session map TSV for a BIDS "
-        "dataset at INPUT_DIR/PROJECT/ produced by xnatcli mriconvert.",
+        "dataset at INPUT_DIR/PROJECT/ produced by xnatbidscli mriconvert.",
     )
     bidsmap_parser.add_argument(
         "-i",
@@ -399,7 +402,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="INPUT_DIR",
         help="Root directory holding the BIDS dataset at INPUT_DIR/PROJECT/ "
-        "(i.e., the output of `xnatcli mriconvert`). The map TSV is written "
+        "(i.e., the output of `xnatbidscli mriconvert`). The map TSV is written "
         "here as PROJECT-<PROJECT>_bidsmap.tsv.",
     )
     bidsmap_parser.add_argument(
@@ -433,7 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="INPUT_DIR",
         help="Parent directory holding the BIDS dataset at INPUT_DIR/PROJECT/ "
-        "(i.e., the output of `xnatcli mriconvert`). CuBIDS outputs land "
+        "(i.e., the output of `xnatbidscli mriconvert`). CuBIDS outputs land "
         "under INPUT_DIR/PROJECT-<PROJECT>_cubids/.",
     )
     cubids_parser.add_argument(

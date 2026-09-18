@@ -1,11 +1,11 @@
 # Test Plan Checklist
 
-This is a manual test plan for exercising every `xnatcli` subcommand and its flag combinations by hand against a real (or test) XNAT server. Work through the sections in order — `login` → `query` → `download` → `mriconfig` → `mriconvert` → `physioconvert` → `bidsmap` → `cubids` — since later subcommands consume the output of earlier ones; within a section, check off each item as you verify it. Use this before a release or after any change to a subcommand's behavior to catch regressions across the full workflow.
+This is a manual test plan for exercising every `xnatbidscli` subcommand and its flag combinations by hand against a real (or test) XNAT server. Work through the sections in order — `login` → `query` → `download` → `mriconfig` → `mriconvert` → `physioconvert` → `bidsmap` → `cubids` — since later subcommands consume the output of earlier ones; within a section, check off each item as you verify it. Use this before a release or after any change to a subcommand's behavior to catch regressions across the full workflow.
 
-## xnatcli login
+## xnatbidscli login
 
-- [x] `xnatcli login` with valid server/username/password succeeds, prints the "Credentials verified and saved" message, and writes `~/.xnatcli/credentials.cfg`
-- [x] `credentials.cfg` contains a `[xnatcli]` section with `server`, `username`, `password`
+- [x] `xnatbidscli login` with valid server/username/password succeeds, prints the "Credentials verified and saved" message, and writes `~/.xnatbidscli/credentials.cfg`
+- [x] `credentials.cfg` contains a `[xnatbidscli]` section with `server`, `username`, `password`
 - [ ] `credentials.cfg` permissions are restricted (mode `0600` on macOS/Linux; read-only bit toggled on Windows)
 - [x] Password input is not echoed to the terminal
 - [ ] Leaving the server URL prompt blank exits with "server url is required" and nothing is written
@@ -14,16 +14,16 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] A trailing `/` on the server URL is stripped before verification/storage
 - [ ] An incorrect password exits with an authentication-failure message and does **not** overwrite existing valid credentials
 - [ ] An unreachable/incorrect server URL exits with a connection-failure message and does **not** overwrite existing valid credentials
-- [ ] Re-running `xnatcli login` with new valid credentials overwrites the previously stored credentials
-- [ ] After login, a downstream command (e.g. `xnatcli query`) succeeds using the stored credentials without re-prompting
+- [ ] Re-running `xnatbidscli login` with new valid credentials overwrites the previously stored credentials
+- [ ] After login, a downstream command (e.g. `xnatbidscli query`) succeeds using the stored credentials without re-prompting
 
-## xnatcli query
+## xnatbidscli query
 
-- [ ] Deleting/renaming `credentials.cfg` and running `xnatcli query` exits with a message to run `xnatcli login`
-- [ ] A `credentials.cfg` missing the `[xnatcli]` section (or a required key) exits with a message to re-run `xnatcli login`
-- [ ] `xnatcli query PROJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_<YYYYMMDD_HHMMSS>.csv` with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,SUBJECT_BIDS_RENAME,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE,EXPERIMENT_BIDS_RENAME,ESTIMATED_SIZE_BYTES` and one row per experiment in the project
+- [ ] Deleting/renaming `credentials.cfg` and running `xnatbidscli query` exits with a message to run `xnatbidscli login`
+- [ ] A `credentials.cfg` missing the `[xnatbidscli]` section (or a required key) exits with a message to re-run `xnatbidscli login`
+- [ ] `xnatbidscli query PROJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_<YYYYMMDD_HHMMSS>.csv` with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,SUBJECT_BIDS_RENAME,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE,EXPERIMENT_BIDS_RENAME,ESTIMATED_SIZE_BYTES` and one row per experiment in the project
 - [ ] `SUBJECT_BIDS_RENAME` and `EXPERIMENT_BIDS_RENAME` are always written blank
-- [ ] `xnatcli query PROJECT SUBJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_SUBJECT-<SUBJECT>_<YYYYMMDD_HHMMSS>.csv` scoped to that subject's experiments only
+- [ ] `xnatbidscli query PROJECT SUBJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_SUBJECT-<SUBJECT>_<YYYYMMDD_HHMMSS>.csv` scoped to that subject's experiments only
 - [ ] Supplying a project by its XNAT ID and, separately, by its label both resolve to the same project
 - [ ] Supplying a subject by its XNAT ID and, separately, by its label both resolve to the same subject
 - [ ] A nonexistent `PROJECT` exits with an error and no CSV is written
@@ -40,9 +40,9 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Omitting `-o/--output` fails with an argparse "required" error
 - [ ] `OUTPUT_DIR` that does not yet exist is created
 
-## xnatcli download
+## xnatbidscli download
 
-- [ ] Deleting/renaming `credentials.cfg` and running `xnatcli download` exits with a message to run `xnatcli login`
+- [ ] Deleting/renaming `credentials.cfg` and running `xnatbidscli download` exits with a message to run `xnatbidscli login`
 - [ ] Omitting both `-1` and `-c/--csv` fails with a "one of the arguments is required" error
 - [ ] Supplying both `-1` and `-c/--csv` fails with a mutually-exclusive-arguments error
 - [ ] `-1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR` downloads every scan file to `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/scans/<scan_id>/<resource_label>/<filename>`
@@ -81,7 +81,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Combine `--csv`, `-n`, `-l`, `-a`, `-d` together in one invocation and verify all behaviors hold simultaneously
 - [ ] Omitting `-o/--output` fails with an argparse "required" error
 
-## xnatcli mriconfig
+## xnatbidscli mriconfig
 
 - [ ] Running with `dcm2bids_helper` or `dcm2niix` missing from `PATH` exits with a clear error before touching `OUTPUT_DIR`
 - [ ] Omitting all of `-1`, `-s/--subject`, `-p/--project` fails with a "one of the arguments is required" error
@@ -107,7 +107,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Combine `-p`, `-n`, `-l`, `-d` together in one invocation and verify all behaviors hold simultaneously
 - [ ] Omitting `-i/--input` or `-o/--output` fails with an argparse "required" error
 
-## xnatcli mriconvert
+## xnatbidscli mriconvert
 
 - [ ] Running with `dcm2bids`/`dcm2niix` missing from `PATH`, or `pydicom` not importable, exits with a clear error (unless `-m/--maps` is given)
 - [ ] Omitting all of `-1`, `-s/--subject`, `-p/--project` fails with a "one of the arguments is required" error
@@ -142,9 +142,9 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Combine `-p`, `-n`, `-l`, `-a`, `-d`, `-y` together in one invocation and verify all behaviors hold simultaneously
 - [ ] Omitting `-i/--input` or `-o/--output` fails with an argparse "required" error
 
-## xnatcli physioconvert
+## xnatbidscli physioconvert
 
-- [ ] Running before `xnatcli mriconvert` has produced `OUTPUT_DIR/PROJECT/mriconvert_qc.tsv` exits with a clear error
+- [ ] Running before `xnatbidscli mriconvert` has produced `OUTPUT_DIR/PROJECT/mriconvert_qc.tsv` exits with a clear error
 - [ ] Running with `phys2bids` unavailable exits with a clear error
 - [ ] With every `mriconvert_qc.tsv` `physio` column blank, the run completes with zero associations processed
 - [ ] Filling in one row's `physio` column with a valid recording basename under `PhysioParent` converts it, writing `_physio.tsv.gz`/`.json` next to the paired `.nii.gz`, and reports `STATUS=CONVERTED`
@@ -169,7 +169,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Exit code is `1` when any association is `CONVERT_ERROR` or `READER_MISSING`, and `0` otherwise
 - [ ] Omitting `-o/--output` or `-p/--project` fails with an argparse "required" error
 
-## xnatcli bidsmap
+## xnatbidscli bidsmap
 
 - [ ] `-i INPUT_DIR -p PROJECT` (no `-o`) writes `INPUT_DIR/PROJECT-<PROJECT>_bidsmap.tsv` with columns `participant_id`, `participant_rename`, `session_id`, `session_rename`, sorted by participant then session
 - [ ] For a dataset with no `ses-*` directories at all, the map TSV only has `participant_id`/`participant_rename` columns
@@ -190,7 +190,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Run `physioconvert` before `bidsmap -o` and confirm the physio `_physio.tsv.gz`/`.json` pair rides along the copy with correct participant/session label substitution
 - [ ] Omitting `-i/--input` or `-p/--project` fails with an argparse "required" error
 
-## xnatcli cubids
+## xnatbidscli cubids
 
 - [ ] Running with `cubids` missing from `PATH` exits with a clear error
 - [ ] `-i INPUT_DIR -p PROJECT` where `INPUT_DIR/PROJECT/` does not exist exits with a clear error

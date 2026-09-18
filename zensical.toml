@@ -16,14 +16,14 @@ nav = [
   { "Manual Interventions" = "manual.md" },
   { "Design" = "design.md" },
   { "CLI Reference" = [
-      { "xnatcli login" = "cli/login.md" },
-      { "xnatcli query" = "cli/query.md" },
-      { "xnatcli download" = "cli/download.md" },
-      { "xnatcli mriconfig" = "cli/mriconfig.md" },
-      { "xnatcli mriconvert" = "cli/mriconvert.md" },
-      { "xnatcli physioconvert" = "cli/physioconvert.md" },
-      { "xnatcli bidsmap" = "cli/bidsmap.md" },
-      { "xnatcli cubids" = "cli/cubids.md" },
+      { "xnatbidscli login" = "cli/login.md" },
+      { "xnatbidscli query" = "cli/query.md" },
+      { "xnatbidscli download" = "cli/download.md" },
+      { "xnatbidscli mriconfig" = "cli/mriconfig.md" },
+      { "xnatbidscli mriconvert" = "cli/mriconvert.md" },
+      { "xnatbidscli physioconvert" = "cli/physioconvert.md" },
+      { "xnatbidscli bidsmap" = "cli/bidsmap.md" },
+      { "xnatbidscli cubids" = "cli/cubids.md" },
     ] },
 ]
 

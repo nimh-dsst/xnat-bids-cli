@@ -325,7 +325,7 @@ def _find_scans_json() -> Path | None:
     here = Path(__file__).resolve().parent
     for candidate in (
         here.parent / "assets" / "mriconvert_qc.json",  # dev: src/assets/
-        here / "assets" / "mriconvert_qc.json",  # wheel: xnatcli/assets/
+        here / "assets" / "mriconvert_qc.json",  # wheel: xnatbidscli/assets/
     ):
         if candidate.is_file():
             return candidate

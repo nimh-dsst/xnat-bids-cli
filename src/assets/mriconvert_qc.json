@@ -42,7 +42,7 @@
         "Description": "Free-text field for an end-user to record a corrected bids_name when the file needs renaming. Empty by default."
     },
     "physio": {
-        "Description": "Free-text field for an end-user to record the basename (with extension) of a raw physio recording found under PhysioParent that was acquired alongside this scan. Consumed by xnatcli physioconvert to convert and place that recording directly, using this row's participant_id/session_id/datatype for placement and its bids_name/rename for naming. Empty by default; never auto-populated by mriconvert."
+        "Description": "Free-text field for an end-user to record the basename (with extension) of a raw physio recording found under PhysioParent that was acquired alongside this scan. Consumed by xnatbidscli physioconvert to convert and place that recording directly, using this row's participant_id/session_id/datatype for placement and its bids_name/rename for naming. Empty by default; never auto-populated by mriconvert."
     },
     "recommend_for_use": {
         "Description": "Whether the file is recommended for use. Empty until reviewed by an end-user.",

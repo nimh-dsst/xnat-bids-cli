@@ -1,10 +1,10 @@
-# `xnatcli physioconvert`
+# `xnatbidscli physioconvert`
 
-Converts physio recordings **associated with an `xnatcli mriconvert` BIDS dataset** to [BIDS physiological recordings](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/physiological-recordings.html) (`_physio.tsv.gz` + `_physio.json`), using [`phys2bids`](https://phys2bids.readthedocs.io/) (imported as a Python library) to read the files and write the BIDS output. It must run **after** `xnatcli mriconvert` and **before** `xnatcli bidsmap -o` (the association it consumes lives in `mriconvert`'s raw `mriconvert_qc.tsv`, and the `physio` column is dropped once `bidsmap` promotes it to `scans.tsv`).
+Converts physio recordings **associated with an `xnatbidscli mriconvert` BIDS dataset** to [BIDS physiological recordings](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/physiological-recordings.html) (`_physio.tsv.gz` + `_physio.json`), using [`phys2bids`](https://phys2bids.readthedocs.io/) (imported as a Python library) to read the files and write the BIDS output. It must run **after** `xnatbidscli mriconvert` and **before** `xnatbidscli bidsmap -o` (the association it consumes lives in `mriconvert`'s raw `mriconvert_qc.tsv`, and the `physio` column is dropped once `bidsmap` promotes it to `scans.tsv`).
 
-Each physio recording is tied to one MRI scan by hand: fill in `mriconvert_qc.tsv`'s `physio` column with the raw recording's basename (with extension), found by browsing the flat directory recorded as `PhysioParent` in `mriconvert_qc.json` (set via `xnatcli mriconvert -y/--physio`). `physioconvert` then converts and places that recording **directly alongside its paired scan** — no filename parsing or guessed entities.
+Each physio recording is tied to one MRI scan by hand: fill in `mriconvert_qc.tsv`'s `physio` column with the raw recording's basename (with extension), found by browsing the flat directory recorded as `PhysioParent` in `mriconvert_qc.json` (set via `xnatbidscli mriconvert -y/--physio`). `physioconvert` then converts and places that recording **directly alongside its paired scan** — no filename parsing or guessed entities.
 
-1. Validates that `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.tsv` exists (i.e. `xnatcli mriconvert` has already run); exits with a message if `phys2bids` is unavailable.
+1. Validates that `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.tsv` exists (i.e. `xnatbidscli mriconvert` has already run); exits with a message if `phys2bids` is unavailable.
 2. Reads `mriconvert_qc.tsv` (read-only — `physioconvert` never writes it back) and scopes to every row with a non-blank `physio` column.
 3. **Collision check**: if the same `physio` basename is referenced by more than one row, **none** of those rows are converted — each is marked `COLLISION` and a `WARNING` lists every row referencing it. Clear all but one row's `physio` column and re-run to resolve.
 4. Reads `PhysioParent` from `OUTPUT_DIR/PROJECT-<PROJECT>_mriconvert_qc.json`. For each remaining row, resolves the raw file as `PhysioParent/<physio>`; a missing `PhysioParent` or basename not found under it is reported as `SOURCE_MISSING` for that row (and does not block other rows).
@@ -17,10 +17,10 @@ Each physio recording is tied to one MRI scan by hand: fill in `mriconvert_qc.ts
 
 ```bash
 # Serial
-xnatcli physioconvert -o BIDS_DIR -p MYPROJ
+xnatbidscli physioconvert -o BIDS_DIR -p MYPROJ
 
 # 4 conversions in parallel
-xnatcli physioconvert -o BIDS_DIR -p MYPROJ -n 4
+xnatbidscli physioconvert -o BIDS_DIR -p MYPROJ -n 4
 ```
 
 With `-n/--nphysio` > 1, the `phys2bids` conversions run in parallel across separate **processes** (real parallelism, since `phys2bids` is an in-process Python library rather than an external command). The conversions run in workers, but all placement, `physioconvert_qc.tsv`, and the log are written **serially in the main process**, drained in **sorted-filename order** (out-of-order completions are buffered until their turn) — so results are fully deterministic regardless of `-n`.
@@ -40,8 +40,8 @@ Exit code is `1` if any association is `CONVERT_ERROR` or `READER_MISSING`, and 
 
 | Argument | Description |
 | --- | --- |
-| `-o`, `--output` | **Required.** Same BIDS root `xnatcli mriconvert` wrote to (`OUTPUT_DIR` must hold `PROJECT-<PROJECT>_mriconvert_qc.tsv`/`PROJECT-<PROJECT>_mriconvert_qc.json`). Physio outputs are written directly into `OUTPUT_DIR/PROJECT/<participant_id>/[<session_id>/]<datatype>/`, alongside the associated `.nii.gz`. |
-| `-p`, `--project` | **Required.** Project directory name under `OUTPUT_DIR` identifying the BIDS dataset produced by `xnatcli mriconvert`. |
+| `-o`, `--output` | **Required.** Same BIDS root `xnatbidscli mriconvert` wrote to (`OUTPUT_DIR` must hold `PROJECT-<PROJECT>_mriconvert_qc.tsv`/`PROJECT-<PROJECT>_mriconvert_qc.json`). Physio outputs are written directly into `OUTPUT_DIR/PROJECT/<participant_id>/[<session_id>/]<datatype>/`, alongside the associated `.nii.gz`. |
+| `-p`, `--project` | **Required.** Project directory name under `OUTPUT_DIR` identifying the BIDS dataset produced by `xnatbidscli mriconvert`. |
 | `-n`, `--nphysio` | *Optional.* Number of physio conversions to run in parallel, one `phys2bids` conversion per process (default `1`). |
 | `-l`, `--log` | *Optional.* Write a per-association log CSV to `OUTPUT_DIR/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv` (header `DATESTAMP,USER,STATUS,MRI_FILENAME,PHYSIO_SOURCE,DESTINATION_PATH`). One row per processed association, except a conversion that produced several outputs emits one row per output; associations with no output get a single blank-`DESTINATION_PATH` row. Also mirrors everything printed to stdout/stderr into a companion text log at `OUTPUT_DIR/log/physioconvert_<YYYYMMDD_HHMMSS>_log.txt`, the Python equivalent of piping through `tee`. Off by default. |
 

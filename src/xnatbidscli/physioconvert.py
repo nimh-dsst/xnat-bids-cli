@@ -315,7 +315,7 @@ def _run_phys2bids_to_staging(file_path: Path) -> tuple[str | None, str | None]:
     """
     from phys2bids.phys2bids import phys2bids as run_phys2bids
 
-    staging = Path(tempfile.mkdtemp(prefix="xnatcli_phys2bids_"))
+    staging = Path(tempfile.mkdtemp(prefix="xnatbidscli_phys2bids_"))
     try:
         run_phys2bids(
             filename=file_path.name,
@@ -474,7 +474,7 @@ def _find_asset(name: str) -> Path | None:
     here = Path(__file__).resolve().parent
     for candidate in (
         here.parent / "assets" / name,  # dev: src/assets/
-        here / "assets" / name,  # wheel: xnatcli/assets/
+        here / "assets" / name,  # wheel: xnatbidscli/assets/
     ):
         if candidate.is_file():
             return candidate
@@ -523,13 +523,15 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
     bids_root = output_dir / args.project
     if not bids_root.is_dir():
         sys.exit(
-            f"Error: BIDS dataset not found at {bids_root}; run xnatcli "
+            f"Error: BIDS dataset not found at {bids_root}; run xnatbidscli "
             "mriconvert first."
         )
 
     mriconvert_qc_tsv = output_dir / f"PROJECT-{args.project}_mriconvert_qc.tsv"
     if not mriconvert_qc_tsv.is_file():
-        sys.exit(f"Error: {mriconvert_qc_tsv} not found; run xnatcli mriconvert first.")
+        sys.exit(
+            f"Error: {mriconvert_qc_tsv} not found; run xnatbidscli mriconvert first."
+        )
 
     try:
         import phys2bids  # noqa: F401

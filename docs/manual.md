@@ -1,12 +1,12 @@
 # Manual Interventions
 
-Some steps in the `xnatcli` workflow require a human to fill in values by hand between two commands. This page covers those steps.
+Some steps in the `xnatbidscli` workflow require a human to fill in values by hand between two commands. This page covers those steps.
 
 ## Renaming SUBJECT/EXPERIMENT during download
 
-`xnatcli download` (see [`xnatcli download`](cli/download.md)) can write a subject's or experiment's files under a different on-disk directory name than its XNAT label. How you supply the rename depends on which download mode you're using:
+`xnatbidscli download` (see [`xnatbidscli download`](cli/download.md)) can write a subject's or experiment's files under a different on-disk directory name than its XNAT label. How you supply the rename depends on which download mode you're using:
 
-- **`--csv` (batch) mode:** After `xnatcli query` writes its CSV (see [`xnatcli query`](cli/query.md)), the `SUBJECT_BIDS_RENAME` and `EXPERIMENT_BIDS_RENAME` columns are empty. Fill in the corresponding cell(s) for a row before running `download`.
+- **`--csv` (batch) mode:** After `xnatbidscli query` writes its CSV (see [`xnatbidscli query`](cli/query.md)), the `SUBJECT_BIDS_RENAME` and `EXPERIMENT_BIDS_RENAME` columns are empty. Fill in the corresponding cell(s) for a row before running `download`.
 - **`-1` (single-experiment) or `--accession` mode:** Pass `--rename-subject` and/or `--rename-experiment` on the command line instead — there's no CSV to edit. With a subject `--accession` (which may download more than one experiment), only `--rename-subject` is allowed; `--rename-experiment` is rejected.
 
 Either way, the same formatting rule applies:
