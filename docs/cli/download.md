@@ -84,7 +84,7 @@ In `--csv` mode with `-n` > 1, pressing Ctrl+C cancels every experiment that has
 When `-l/--log` is supplied, a CSV is written at `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv`, where the timestamp is the local-time start of the run. The header is always:
 
 ```text
-DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS
+DATESTAMP,USER,PROJECT,SUBJECT,EXPERIMENT,STATUS
 ```
 
-`DATESTAMP` is the per-experiment download attempt begin time, formatted to match Python's `logging` module default `asctime` (`YYYY-MM-DD HH:MM:SS,mmm`, local time). `SUBJECT`/`EXPERIMENT` reflect any rename override (`SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` in `--csv` mode, `--rename-subject`/`--rename-experiment` in `-1` mode — see [Manual Interventions](../manual.md)), i.e. the on-disk directory names actually written under `OUTPUT_DIR`, not necessarily the original XNAT labels. One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
+`DATESTAMP` is the per-experiment download attempt begin time, formatted to match Python's `logging` module default `asctime` (`YYYY-MM-DD HH:MM:SS,mmm`, local time). `USER` is the OS-level username running the command (via Python's `getpass.getuser()`). `SUBJECT`/`EXPERIMENT` reflect any rename override (`SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` in `--csv` mode, `--rename-subject`/`--rename-experiment` in `-1` mode — see [Manual Interventions](../manual.md)), i.e. the on-disk directory names actually written under `OUTPUT_DIR`, not necessarily the original XNAT labels. One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.

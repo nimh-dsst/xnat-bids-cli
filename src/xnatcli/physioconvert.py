@@ -10,6 +10,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
+from .sysinfo import get_system_username
+
 # QC/status manifest written to OUTPUT_DIR, alongside mriconvert's
 # PROJECT-<PROJECT>_mriconvert_qc.tsv. Fully regenerated every run from the
 # current mriconvert_qc.tsv content -- a visual reference for an expert reviewer,
@@ -63,7 +65,7 @@ class _LogWriter:
     subcommands.
 
     A no-op when ``path`` is ``None`` (logging disabled). The header is
-    ``DATESTAMP,STATUS,MRI_FILENAME,PHYSIO_SOURCE,DESTINATION_PATH``;
+    ``DATESTAMP,USER,STATUS,MRI_FILENAME,PHYSIO_SOURCE,DESTINATION_PATH``;
     physioconvert places files serially in the main process, so no lock is
     needed. An association that produced several outputs (a multi-frequency
     split) emits one row per destination; one with no output emits a single
@@ -72,11 +74,12 @@ class _LogWriter:
 
     def __init__(self, path: Path | None):
         self._path = path
+        self._user = get_system_username()
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("w", newline="") as f:
                 csv.writer(f).writerow(
-                    ["DATESTAMP", "STATUS", "MRI_FILENAME", "PHYSIO_SOURCE", "DESTINATION_PATH"]
+                    ["DATESTAMP", "USER", "STATUS", "MRI_FILENAME", "PHYSIO_SOURCE", "DESTINATION_PATH"]
                 )
 
     def write(
@@ -94,7 +97,9 @@ class _LogWriter:
         with self._path.open("a", newline="") as f:
             writer = csv.writer(f)
             for dest in dests:
-                writer.writerow([datestamp, status, filename, physio_source, dest])
+                writer.writerow(
+                    [datestamp, self._user, status, filename, physio_source, dest]
+                )
 
 
 class _StdioTee:

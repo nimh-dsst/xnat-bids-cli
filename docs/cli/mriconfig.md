@@ -41,7 +41,7 @@ Per-experiment helper output is uniformly nested under `<target>/tmp_dcm2bids/he
 
 Exit code is `0` if every processed experiment is `COMPLETE`, and `1` otherwise. Both config drafts are attempted regardless.
 
-With `-l/--log`, a CSV identical in shape to `download`'s and `mriconvert`'s logs (`DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `OUTPUT_DIR/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start) — the same `log/` directory used by `mriconvert`. One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
+With `-l/--log`, a CSV identical in shape to `download`'s and `mriconvert`'s logs (`DATESTAMP,USER,PROJECT,SUBJECT,EXPERIMENT,STATUS`) is written to `OUTPUT_DIR/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start) — the same `log/` directory used by `mriconvert`. One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
 
 With `-d/--delete`, every `*.nii.gz` file in each experiment's helper subdir (`OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/tmp_dcm2bids/helper/<EXPERIMENT>/`) is removed right after `dcm2bids_helper` returns for that experiment, regardless of STATUS. JSON sidecars are kept — the project-level config draft only needs the JSONs, and the NIfTI images are typically far larger. The per-experiment status line gets a trailing `(removed N .nii.gz)` so the deletion is visible. Use this when you only need the drafted config and not the helper-stage NIfTIs.
 

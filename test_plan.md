@@ -63,7 +63,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] When the input CSV's `ESTIMATED_SIZE_BYTES` cell is blank/non-numeric for a row, that row's progress line shows only bytes downloaded (no `%`/`est.` total)
 - [ ] Under `-n 4`, multiple experiments' progress lines interleave in the output without garbling (one full line per print, no truncation/overlap)
 - [ ] Progress reporting stops (no further lines for that experiment) once its scans+resources download finishes, and does not delay the run's completion
-- [ ] `-l/--log` writes `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS` and one row per processed experiment
+- [ ] `-l/--log` writes `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,USER,PROJECT,SUBJECT,EXPERIMENT,STATUS` and one row per processed experiment
 - [ ] Without `-l/--log`, no `log/` directory is created
 - [ ] In `--csv` mode, filling in a row's `SUBJECT_BIDS_RENAME` (e.g. `01` or `sub-01`) downloads that experiment's files to `OUTPUT_DIR/PROJECT/sub-01/EXPERIMENT/` instead of `OUTPUT_DIR/PROJECT/SUBJECT_LABEL/EXPERIMENT/`, while still querying XNAT using the original `SUBJECT_LABEL`
 - [ ] Filling in a row's `EXPERIMENT_BIDS_RENAME` (e.g. `baseline` or `ses-baseline`) similarly renames only the `EXPERIMENT` directory level, on disk and in `-a/--archive` filenames
@@ -99,7 +99,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Two identities that collide with no detectable direction code get disambiguated via a minimal-diff `acq-<label>`
 - [ ] A `BidsGuess` that already contains `dir-XX` is left alone, and a conflicting direction code elsewhere in the same slot prints a loud warning
 - [ ] A sidecar with missing/empty `BidsGuess` is skipped with a warning, not fatal to the run
-- [ ] `-l/--log` writes `OUTPUT_DIR/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`
+- [ ] `-l/--log` writes `OUTPUT_DIR/log/mriconfig_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,USER,PROJECT,SUBJECT,EXPERIMENT,STATUS`
 - [ ] `-d/--delete` removes `*.nii.gz` from each experiment's helper subdir right after that experiment's helper run, regardless of `STATUS`, while keeping the JSON sidecars
 - [ ] `-d/--delete` status line shows the trailing `(removed N .nii.gz)` annotation
 - [ ] `-m/--maps` alone (no `dcm2bids_helper`/`dcm2niix` on `PATH`) still succeeds by only re-drafting the config from existing sidecars under `OUTPUT_DIR/PROJECT-<PROJECT>_mriconfig/`
@@ -121,7 +121,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] `-s/--subject PROJECT SUBJECT` converts every experiment directory under that subject
 - [ ] `-p/--project PROJECT` converts every experiment of every subject in the project
 - [ ] `-n/--nconvert 4` parallelizes session conversions and produces the same per-session outputs as `-n 1`
-- [ ] `-l/--log` writes `OUTPUT_DIR/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,PROJECT,SUBJECT,EXPERIMENT,STATUS`
+- [ ] `-l/--log` writes `OUTPUT_DIR/log/mriconvert_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,USER,PROJECT,SUBJECT,EXPERIMENT,STATUS`
 - [ ] `-a/--archive` tars+gzips `INPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` to `INPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz` regardless of conversion outcome
 - [ ] Re-running with `-a/--archive` against a session whose archive already exists skips archiving with a warning
 - [ ] `-d/--delete` without `-a/--archive` deletes the session's input directory only when `STATUS=COMPLETE` or `STATUS=EMPTY`, leaving `FAILURE`/`NONEXISTENT` sessions untouched
@@ -163,7 +163,7 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] Deleting/blanking a row's association in `mriconvert_qc.tsv` and re-running marks the corresponding `physioconvert_qc.tsv` row `STATUS=ROW_GONE` while preserving any prior QC review fields
 - [ ] Hand-filled QC review columns (`recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, `qc_notes`) in `physioconvert_qc.tsv` survive subsequent runs
 - [ ] `-n/--nphysio 4` converts multiple associations in parallel processes, and `physioconvert_qc.tsv`/log rows still land in deterministic sorted-`filename` order matching a `-n 1` run
-- [ ] `-l/--log` writes `OUTPUT_DIR/PROJECT/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,STATUS,MRI_FILENAME,PHYSIO_SOURCE,DESTINATION_PATH`, one row per output (or one blank-`DESTINATION_PATH` row for an association with no output)
+- [ ] `-l/--log` writes `OUTPUT_DIR/PROJECT/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,USER,STATUS,MRI_FILENAME,PHYSIO_SOURCE,DESTINATION_PATH`, one row per output (or one blank-`DESTINATION_PATH` row for an association with no output)
 - [ ] `-m/--maps` relocates already-converted outputs to match edited columns and refreshes `physioconvert_qc.tsv` without invoking `phys2bids`
 - [ ] `-m/--maps` on an association with no existing output to relocate leaves it untouched with a note (does not convert it)
 - [ ] Exit code is `1` when any association is `CONVERT_ERROR` or `READER_MISSING`, and `0` otherwise
@@ -203,5 +203,5 @@ This is a manual test plan for exercising every `xnatcli` subcommand and its fla
 - [ ] If `add-nifti-info` exits non-zero, `group` is skipped entirely and the command exits `1`
 - [ ] If `group` exits non-zero after a successful `add-nifti-info`, the command exits `1`
 - [ ] A fully successful run exits `0`
-- [ ] `-l/--log` writes `INPUT_DIR/PROJECT-<PROJECT>_cubids/log/cubids_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,PROJECT,STEP,STATUS`, one row per step (`add-nifti-info`, `group`)
+- [ ] `-l/--log` writes `INPUT_DIR/PROJECT-<PROJECT>_cubids/log/cubids_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,USER,PROJECT,STEP,STATUS`, one row per step (`add-nifti-info`, `group`)
 - [ ] Omitting `-i/--input` or `-p/--project` fails with an argparse "required" error

@@ -7,6 +7,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from .sysinfo import get_system_username
+
 STATUS_COMPLETE = "COMPLETE"
 STATUS_FAILURE = "FAILURE"
 
@@ -19,11 +21,12 @@ def _logging_now() -> str:
 class _LogWriter:
     def __init__(self, path: Path | None):
         self._path = path
+        self._user = get_system_username()
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("w", newline="") as f:
                 csv.writer(f).writerow(
-                    ["DATESTAMP", "PROJECT", "STEP", "STATUS"]
+                    ["DATESTAMP", "USER", "PROJECT", "STEP", "STATUS"]
                 )
 
     def write(
@@ -32,7 +35,9 @@ class _LogWriter:
         if self._path is None:
             return
         with self._path.open("a", newline="") as f:
-            csv.writer(f).writerow([datestamp, project, step, status])
+            csv.writer(f).writerow(
+                [datestamp, self._user, project, step, status]
+            )
 
 
 def _run_step(
