@@ -23,7 +23,7 @@ xnatbidscli physioconvert -o BIDS_DIR -p MYPROJ
 xnatbidscli physioconvert -o BIDS_DIR -p MYPROJ -n 4
 ```
 
-With `-n/--nphysio` > 1, the `phys2bids` conversions run in parallel across separate **processes** (real parallelism, since `phys2bids` is an in-process Python library rather than an external command). The conversions run in workers, but all placement, `physioconvert_qc.tsv`, and the log are written **serially in the main process**, drained in **sorted-filename order** (out-of-order completions are buffered until their turn) — so results are fully deterministic regardless of `-n`.
+With `-n/--nphysio` > 1, the `phys2bids` conversions run in parallel across separate **processes** (real parallelism, since `phys2bids` is an in-process Python library rather than an external command). The conversions run in workers, but all placement, `physioconvert_qc.tsv`, and the log are written **serially in the main process**, drained in **sorted-filename order** (out-of-order completions are buffered until their turn) — so results are fully deterministic regardless of `-n`. `phys2bids` prints its own progress/logging output; rather than letting several workers interleave that on the terminal, each worker's output is held in memory and printed (indented, under that association's result line) once its result is drained.
 
 ## Per-association STATUS (and exit code)
 

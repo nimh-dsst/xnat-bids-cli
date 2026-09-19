@@ -1,6 +1,9 @@
 import argparse
+import contextlib
 import csv
+import io
 import json
+import logging
 import re
 import shutil
 import sys
@@ -304,32 +307,66 @@ def _read_physio_parent(mriconvert_qc_json: Path) -> Path | None:
     return path if path.is_dir() else None
 
 
-def _run_phys2bids_to_staging(file_path: Path) -> tuple[str | None, str | None]:
+def _clear_root_logging_handlers() -> None:
+    """Close and drop every handler on the root logger.
+
+    phys2bids configures logging via ``logging.basicConfig(handlers=[...])``
+    on each call, which is a no-op once the root logger already has handlers.
+    A pooled worker process runs many conversions in turn, so without this the
+    *first* conversion's handlers (bound to that call's redirected streams and
+    log file) would silently keep receiving every later conversion's messages.
+    Closing first releases the per-conversion log file phys2bids opens inside
+    the staging directory, so it doesn't block that directory's removal.
+    """
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        handler.close()
+        root.removeHandler(handler)
+
+
+def _run_phys2bids_to_staging(file_path: Path) -> tuple[str | None, str | None, str]:
     """Run the phys2bids workflow for one file into a fresh staging directory.
 
     This is the slow part of conversion — running phys2bids — isolated so it can
-    be parallelized across processes. The placement of its output into the BIDS
-    tree happens later, serially, in the main process. Returns
-    ``(staging_dir, None)`` on success, or ``(None, error)``; the staging
-    directory is left for the caller to consume and remove.
+    be parallelized across processes. phys2bids prints progress and logging
+    output of its own directly to stdout/stderr; when several of these run
+    concurrently in worker processes that output interleaves unreadably on the
+    shared terminal. It's captured here instead and handed back to the caller,
+    which prints it once this conversion's own result line is written, keeping
+    each association's output together and in the deterministic order results
+    are drained in.
+
+    The placement of phys2bids's output into the BIDS tree happens later,
+    serially, in the main process. Returns ``(staging_dir, error, output)``:
+    ``staging_dir`` is ``None`` on failure; ``output`` is the captured text
+    (may be empty). The staging directory is left for the caller to consume
+    and remove.
     """
     from phys2bids.phys2bids import phys2bids as run_phys2bids
 
     staging = Path(tempfile.mkdtemp(prefix="xnatbidscli_phys2bids_"))
+    captured = io.StringIO()
+    _clear_root_logging_handlers()
     try:
-        run_phys2bids(
-            filename=file_path.name,
-            indir=str(file_path.parent),
-            outdir=str(staging),
-            quiet=True,
-        )
-    except Exception as exc:  # noqa: BLE001 - surface phys2bids failures
-        shutil.rmtree(staging, ignore_errors=True)
-        return None, f"phys2bids failed: {exc}"
+        with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+            try:
+                run_phys2bids(
+                    filename=file_path.name,
+                    indir=str(file_path.parent),
+                    outdir=str(staging),
+                    quiet=True,
+                )
+            except Exception as exc:  # noqa: BLE001 - surface phys2bids failures
+                shutil.rmtree(staging, ignore_errors=True)
+                return None, f"phys2bids failed: {exc}", captured.getvalue()
+    finally:
+        # Release the log file phys2bids opened in the staging directory
+        # before the caller may try to remove that directory.
+        _clear_root_logging_handlers()
     if not list(staging.glob("*.tsv.gz")):
         shutil.rmtree(staging, ignore_errors=True)
-        return None, "phys2bids produced no .tsv.gz output"
-    return str(staging), None
+        return None, "phys2bids produced no .tsv.gz output", captured.getvalue()
+    return str(staging), None, captured.getvalue()
 
 
 def _run_worker(task: tuple[str, str]) -> dict:
@@ -355,6 +392,7 @@ def _run_worker(task: tuple[str, str]) -> dict:
         "duration_seconds": "",
         "staging": None,
         "convert_error": None,
+        "output": "",
     }
 
     blueprint, err, reader_missing = _load_blueprint(path)
@@ -371,7 +409,7 @@ def _run_worker(task: tuple[str, str]) -> dict:
         result["err"] = err
         return result
 
-    result["staging"], result["convert_error"] = _run_phys2bids_to_staging(path)
+    result["staging"], result["convert_error"], result["output"] = _run_phys2bids_to_staging(path)
     return result
 
 
@@ -688,6 +726,10 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             elif written:
                 line += f" — wrote {len(written)} file(s)"
             print(line)
+            output = result["output"].strip("\n")
+            if output:
+                for output_line in output.splitlines():
+                    print(f"    {output_line}")
             log_writer.write(start, filename, status, physio, written)
 
             qc_rows.append({

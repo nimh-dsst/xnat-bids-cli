@@ -71,14 +71,74 @@ _SCANS_USER_COLUMNS = (
 )
 _SUB_RE = re.compile(r"(sub-[A-Za-z0-9]+)")
 _SES_RE = re.compile(r"(ses-[A-Za-z0-9]+)")
+# A SUBJECT/EXPERIMENT directory name matching these exactly (not just
+# containing a substring like it) is one `xnatbidscli download` wrote via
+# --rename-subject/--rename-experiment (or the CSV's SUBJECT_BIDS_RENAME/
+# EXPERIMENT_BIDS_RENAME columns): already `sub-<alnum>`/`ses-<alnum>`, so it
+# must be used as the BIDS label verbatim rather than sanitized and
+# re-prefixed.
+_SUB_RENAMED_RE = re.compile(r"^sub-[A-Za-z0-9]+$")
+_SES_RENAMED_RE = re.compile(r"^ses-[A-Za-z0-9]+$")
 _BIDS_NAME_RE = re.compile(r"^sub-[A-Za-z0-9]+_ses-[A-Za-z0-9]+_(.+)\.nii\.gz$")
 
 _print_lock = threading.Lock()
 
+# In-place "elapsed time" progress block shown while conversions are running
+# (see _render_progress). Every concurrent session gets its own line, all
+# redrawn together every 5 seconds (or whenever a status line is printed).
+_active_lock = threading.Lock()
+_active: dict[str, float] = {}  # label -> start time (time.monotonic())
+_progress_lines = 0  # number of progress lines currently drawn on-screen
+
+
+def _register_active(label: str) -> None:
+    with _active_lock:
+        _active[label] = time.monotonic()
+    _render_progress()
+
+
+def _unregister_active(label: str) -> None:
+    with _active_lock:
+        _active.pop(label, None)
+
+
+def _progress_snapshot() -> list[str]:
+    """Current 'LABEL: converting... elapsed Ns' lines, one per active session."""
+    with _active_lock:
+        items = list(_active.items())
+    now = time.monotonic()
+    return [
+        f"{label}: converting... elapsed {int(now - start)}s"
+        for label, start in items
+    ]
+
+
+def _render_progress() -> None:
+    """Redraw the live progress block in place, replacing whatever was drawn
+    on the previous call (see _progress_lines)."""
+    global _progress_lines
+    lines = _progress_snapshot()
+    with _print_lock:
+        if _progress_lines:
+            sys.stdout.write(f"\x1b[{_progress_lines}A\x1b[0J")
+        if lines:
+            sys.stdout.write("\n".join(lines) + "\n")
+        sys.stdout.flush()
+        _progress_lines = len(lines)
+
 
 def _safe_print(msg: str) -> None:
+    """Print msg above the live progress block, then redraw the block."""
+    global _progress_lines
+    lines = _progress_snapshot()
     with _print_lock:
+        if _progress_lines:
+            sys.stdout.write(f"\x1b[{_progress_lines}A\x1b[0J")
         print(msg)
+        if lines:
+            sys.stdout.write("\n".join(lines) + "\n")
+        sys.stdout.flush()
+        _progress_lines = len(lines)
 
 
 def _logging_now() -> str:
@@ -185,8 +245,20 @@ def _convert_one(
     if not any_readable:
         return STATUS_EMPTY, "no readable .dcm/.IMA DICOM files under scans/"
 
-    participant = _NON_ALNUM.sub("", subject)
-    session = session_date or _NON_ALNUM.sub("", experiment)
+    # A directory already named sub-X/ses-Y came from a download-stage
+    # rename: use the label verbatim (no stripping, no re-prefixing, and no
+    # DICOM-date override for the session) since the point of an explicit
+    # rename is that the user controls the final label.
+    if _SUB_RENAMED_RE.match(subject):
+        participant = subject[len("sub-"):]
+    else:
+        participant = _NON_ALNUM.sub("", subject)
+
+    if _SES_RENAMED_RE.match(experiment):
+        session = experiment[len("ses-"):]
+    else:
+        session = session_date or _NON_ALNUM.sub("", experiment)
+
     if not participant or not session:
         return STATUS_FAILURE, (
             f"empty PARTICIPANT or SESSION after sanitizing "
@@ -210,11 +282,20 @@ def _convert_one(
         "--clobber",
         "--force_dcm2bids",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        stderr_tail = (result.stderr or "").strip().splitlines()[-1:] or [""]
+    label = f"{project}/{subject}/{experiment}"
+    _register_active(label)
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        stdout, stderr = proc.communicate()
+    finally:
+        _unregister_active(label)
+
+    if proc.returncode != 0:
+        stderr_tail = (stderr or "").strip().splitlines()[-1:] or [""]
         return STATUS_FAILURE, (
-            f"dcm2bids exited with code {result.returncode}"
+            f"dcm2bids exited with code {proc.returncode}"
             + (f" — {stderr_tail[0]}" if stderr_tail[0] else "")
         )
     return STATUS_COMPLETE, None
@@ -720,14 +801,27 @@ def mriconvert_cmd(args: argparse.Namespace) -> int:
                 delete_experiment_dir(input_root, p, s, e)
         return status
 
-    if args.nconvert <= 1:
-        for triplet in sessions:
-            counts[_one(triplet)] += 1
-    else:
-        with ThreadPoolExecutor(max_workers=args.nconvert) as ex:
-            futures = [ex.submit(_one, t) for t in sessions]
-            for fut in as_completed(futures):
-                counts[fut.result()] += 1
+    stop_progress = threading.Event()
+
+    def _progress_loop() -> None:
+        while not stop_progress.wait(5):
+            _render_progress()
+
+    progress_thread = threading.Thread(target=_progress_loop, daemon=True)
+    progress_thread.start()
+    try:
+        if args.nconvert <= 1:
+            for triplet in sessions:
+                counts[_one(triplet)] += 1
+        else:
+            with ThreadPoolExecutor(max_workers=args.nconvert) as ex:
+                futures = [ex.submit(_one, t) for t in sessions]
+                for fut in as_completed(futures):
+                    counts[fut.result()] += 1
+    finally:
+        stop_progress.set()
+        progress_thread.join()
+        _render_progress()  # clear any leftover progress lines (all sessions are done)
 
     total = sum(counts.values())
     print(f"\nProcessed {total} session(s):")
