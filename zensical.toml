@@ -4,6 +4,9 @@ site_name = "XNAT CLI for BIDS"
 site_description = "A command-line interface for logging into an XNAT server, querying experiments and downloading files, then converting to the BIDS standard format."
 site_author = "NIMH Data Science and Sharing Team"
 site_url = "https://xnatbidscli.readthedocs.io/"
+repo_url = "https://github.com/nimh-dsst/xnat-bids-cli"
+repo_name = "nimh-dsst/xnat-bids-cli"
+edit_uri = "edit/main/docs/"
 
 copyright = """
 Copyright &copy; 2026 NIMH Data Science and Sharing Team

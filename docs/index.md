@@ -7,3 +7,7 @@ A command-line interface for logging into an Extensible Neuroimaging Archive Too
 The [`src/xnatbidscli/`](https://github.com/nimh-dsst/xnat-bids-cli/tree/main/src/xnatbidscli) directory is the installable package that provides the `xnatbidscli` CLI (`xnatbidscli login`, `xnatbidscli download`, `xnatbidscli query`, `xnatbidscli mriconfig`, `xnatbidscli mriconvert`, `xnatbidscli cubids`, `xnatbidscli bidsmap`, `xnatbidscli physioconvert`), built on [PyXNAT](https://pyxnat.github.io/pyxnat/index.html).
 
 See [Installation](installation.md) to get set up, [Design](design.md) for how the package is organized, and the CLI Reference section for each subcommand.
+
+## Project feedback
+
+Visit the [GitHub Issues page](https://github.com/nimh-dsst/xnat-bids-cli/issues) to report bugs, request enhancements or new features, or suggest fixes to any part of the project, including both code and documentation.
