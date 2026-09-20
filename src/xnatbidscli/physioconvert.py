@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import csv
+import gzip
 import io
 import json
 import logging
@@ -47,6 +48,7 @@ STATUS_READER_MISSING = "READER_MISSING"
 STATUS_CONVERT_ERROR = "CONVERT_ERROR"
 STATUS_SOURCE_MISSING = "SOURCE_MISSING"
 STATUS_COLLISION = "COLLISION"
+STATUS_SKIPPED = "SKIPPED"
 
 # Optional reader packages phys2bids imports lazily per format. A missing one
 # is an environment problem, not a sign the file is not physiological data.
@@ -275,6 +277,34 @@ def _destination_dir(bids_root: Path, participant_id: str, session_id: str, data
     if session_id:
         out = out / session_id
     return out / datatype
+
+
+def _is_valid_gzip(path: Path) -> bool:
+    """True if ``path`` decompresses cleanly as GZIP from start to end."""
+    try:
+        with gzip.open(path, "rb") as f:
+            while f.read(1024 * 1024):
+                pass
+        return True
+    except Exception:  # noqa: BLE001 - any decompression failure = corrupt
+        return False
+
+
+def _already_converted(bids_root: Path, row: dict[str, str]) -> bool:
+    """True if this association's ``_physio.tsv.gz`` already exists at its
+    expected destination and is not a corrupt GZIP file.
+
+    Checked only against the single-frequency basename (no ``recording-``
+    label): a prior multi-frequency split is not recognized here and that
+    association is always reconverted.
+    """
+    entity_name = row["rename"].strip() or row["bids_name"].strip()
+    dest_dir = _destination_dir(
+        bids_root, row["participant_id"], row["session_id"], row["datatype"]
+    )
+    basename = _physio_basename(row["participant_id"], row["session_id"], entity_name, None)
+    dest_tsv = dest_dir / f"{basename}.tsv.gz"
+    return dest_tsv.is_file() and _is_valid_gzip(dest_tsv)
 
 
 def _find_collisions(rows: list[dict[str, str]]) -> dict[str, list[str]]:
@@ -629,6 +659,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
             STATUS_CONVERT_ERROR: 0,
             STATUS_SOURCE_MISSING: 0,
             STATUS_COLLISION: 0,
+            STATUS_SKIPPED: 0,
         }
         qc_rows: list[dict[str, str]] = []
         # Destinations already written by an association this run, keyed by
@@ -686,6 +717,13 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
                 print(f"{filename}: {STATUS_SOURCE_MISSING} — {physio!r} not found under PhysioParent")
                 log_writer.write(_logging_now(), filename, STATUS_SOURCE_MISSING, physio, [])
                 qc_rows.append(_carry_row(physio, STATUS_SOURCE_MISSING))
+                continue
+
+            if _already_converted(bids_root, row):
+                counts[STATUS_SKIPPED] += 1
+                print(f"{filename}: {STATUS_SKIPPED} — {physio!r} already converted at its destination")
+                log_writer.write(_logging_now(), filename, STATUS_SKIPPED, physio, [])
+                qc_rows.append(_carry_row(physio, STATUS_SKIPPED))
                 continue
 
             to_convert.append(row)
@@ -767,6 +805,7 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         print(f"\nProcessed {total} physio association(s):")
         for status in (
             STATUS_CONVERTED,
+            STATUS_SKIPPED,
             STATUS_NOT_PHYSIO,
             STATUS_READER_MISSING,
             STATUS_CONVERT_ERROR,

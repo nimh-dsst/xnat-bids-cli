@@ -14,7 +14,8 @@
             "READER_MISSING": "The optional reader package phys2bids needs for this format is not installed.",
             "CONVERT_ERROR": "phys2bids raised while converting, produced no .tsv.gz output, or its destination was already occupied by a different association.",
             "SOURCE_MISSING": "PhysioParent was unset/not a directory, the named basename was not found under it, or the mriconvert_qc.tsv row is missing participant_id/datatype.",
-            "COLLISION": "This physio basename is referenced by more than one mriconvert_qc.tsv row; none of them were converted until resolved."
+            "COLLISION": "This physio basename is referenced by more than one mriconvert_qc.tsv row; none of them were converted until resolved.",
+            "SKIPPED": "The association's _physio.tsv.gz already existed at its expected destination and was a valid (non-corrupt) GZIP file, so conversion was not attempted."
         }
     },
     "n_channels": {
