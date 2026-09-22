@@ -17,6 +17,7 @@ nav = [
   { "Installation" = "installation.md" },
   { "Quick Start" = "quickstart.md" },
   { "Manual Steps" = "manual.md" },
+  { "Using Excel" = "excel.md" },
   { "Design" = "design.md" },
   { "CLI Reference" = [
       { "xnatbidscli login" = "cli/login.md" },
