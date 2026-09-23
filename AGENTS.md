@@ -10,6 +10,7 @@ This project is a command-line interface for logging into an Extensible Neuroima
 - Always update the README.md and docs when something changes in the code that affects the behaviors described in the README.md or docs. But keep document changes concise so any given page does not end up too long.
 - Always make clear and concise comments and numpy docstrings inside the code. The code should be mostly self-explanatory, and comments should be used to clarify complex logic or design decisions.
 - Always use "uv run" to run anything requiring the environment in this repository.
+- Update the docs/faq.md if any functionality behaviors change.
 
 ## Don't
 

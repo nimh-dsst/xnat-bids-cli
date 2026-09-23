@@ -17,6 +17,7 @@ nav = [
   { "Installation" = "installation.md" },
   { "Quick Start" = "quickstart.md" },
   { "Manual Steps" = "manual.md" },
+  { "Frequently Asked Questions" = "faq.md" },
   { "Using Excel" = "excel.md" },
   { "Design" = "design.md" },
   { "CLI Reference" = [
@@ -29,6 +30,10 @@ nav = [
       { "xnatbidscli bidsmap" = "cli/bidsmap.md" },
       { "xnatbidscli cubids" = "cli/cubids.md" },
     ] },
+]
+
+extra_javascript = [
+  "assets/js/faq.js",
 ]
 
 [project.theme]
