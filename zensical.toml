@@ -30,6 +30,7 @@ nav = [
       { "xnatbidscli bidsmap" = "cli/bidsmap.md" },
       { "xnatbidscli cubids" = "cli/cubids.md" },
     ] },
+  { "Changelog" = "changelog.md" },
 ]
 
 extra_javascript = [
