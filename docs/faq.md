@@ -58,6 +58,17 @@ Click a question to expand its answer, or use the buttons below to open or close
     - [`xnatbidscli mriconfig`](cli/mriconfig.md)
     - [Manual Steps — between download and mriconvert](manual.md#2-between-download-and-mriconvert)
 
+??? question "What should I do if I need to change my Dcm2Bids configuration JSON file? How does this change mriconvert and other downstream commands?"
+
+    Edit the config JSON directly, then re-run `mriconvert -c PATH/TO/config.json` against the affected sessions — `mriconvert` is idempotent and safe to re-run, and `dcm2bids --clobber` lets it overwrite existing output; passing `-c` also updates the `Dcm2BidsConfigPath`/`LastModified` recorded in `mriconvert_qc.json`. `--clobber` only overwrites files regenerated under the *same* name, so if the edit changes how a scan is identified (a different `datatype`/`suffix`/`custom_entities`), the previously generated, differently-named file is left behind rather than removed — delete the affected `sub-<PARTICIPANT>/ses-<SESSION>/` directory before reconverting to avoid orphaned files. In `mriconvert_qc.tsv`, rows are merged by `filename`: an unchanged filename keeps its existing row (and any QC already entered) even if a generator-owned field like `series_number` drifted — drift is only reported as a `WARNING`, never applied — while a renamed file gets a new row with blank review columns, and its old row is preserved even though the file it references is gone. Review and clean up both kinds of leftover rows before running `bidsmap`.
+
+    **References:**
+
+    - [`xnatbidscli mriconfig`](cli/mriconfig.md)
+    - [`xnatbidscli mriconvert`](cli/mriconvert.md)
+    - [`xnatbidscli mriconvert` — `mriconvert_qc.tsv`](cli/mriconvert.md#mriconvert_qctsv)
+    - [Manual Steps — between download and mriconvert](manual.md#2-between-download-and-mriconvert)
+
 ??? question "How can I tell what scans aren't converted by Dcm2Bids?"
 
     Check the `tmp_dcm2bids/` scratch directory that `dcm2bids` writes under the BIDS output — any DICOM series that didn't match a description in your config JSON lands there instead of under `sub-*/ses-*/`. Both `mriconvert_qc.tsv` generation and `bidsmap` explicitly skip this directory, so anything left there stays out of your QC sheet and mapped output until the config is fixed and the session is reconverted.
