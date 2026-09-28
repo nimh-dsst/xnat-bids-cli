@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Planned as 2.0.0. The project is renamed from `xnatcli` to `xnatbidscli` and will be published on PyPI. Downloads are faster and more reliable, and you can now rename subjects and experiments between `query` and `download`.
+## [2.0.0] - 2026-09-28
+
+The project is renamed from `xnatcli` to `xnatbidscli` and is published on PyPI. Downloads are faster and more reliable, and you can now rename subjects and experiments between `query` and `download`.
 
 ### Added
 
@@ -55,5 +57,6 @@ First release.
 - `xnatcli` subcommands: `login`, `query`, `download`, `mriconfig`, `mriconvert`, `physioconvert`, `bidsmap` and `cubids`.
 - A documentation site built with Zensical and hosted on Read the Docs.
 
-[Unreleased]: https://github.com/nimh-dsst/xnat-bids-cli/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/nimh-dsst/xnat-bids-cli/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/nimh-dsst/xnat-bids-cli/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/nimh-dsst/xnat-bids-cli/releases/tag/v1.0.0
