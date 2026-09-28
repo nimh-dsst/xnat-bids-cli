@@ -14,6 +14,15 @@ Click a question to expand its answer, or use the buttons below to open or close
     - [Manual Steps — renaming during download](manual.md#renaming-subjectexperiment-during-download)
     - [`xnatbidscli bidsmap`](cli/bidsmap.md)
 
+??? question "Who can read the query CSV, and how do I keep identifiers out of downloaded data?"
+
+    On Linux and macOS, `query` creates its CSV with mode `rw-------`, so only you can read it. To share it, set its group with `chgrp` and grant access with `chmod g+r`, then check with `ls -l`. The CSV can hold PII such as MRNs, scan dates and ages. If labels contain MRNs, fill in `SUBJECT_BIDS_RENAME` and `EXPERIMENT_BIDS_RENAME` before `download`. Otherwise those labels become folder names and appear in download logs.
+
+    **References:**
+
+    - [`xnatbidscli query`](cli/query.md)
+    - [Manual Steps — renaming during download](manual.md#renaming-subjectexperiment-during-download)
+
 ??? question "Where do I store the quality control information for each scan?"
 
     In `mriconvert_qc.tsv`, written by `mriconvert` at `<output>/PROJECT-<PROJECT>_mriconvert_qc.tsv` — one row per converted `.nii.gz` file. Review the data and fill in its `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, and `qc_notes` columns by hand.
@@ -25,12 +34,21 @@ Click a question to expand its answer, or use the buttons below to open or close
 
 ??? question "How do I filter out scans I don't want with the query command?"
 
-    `query` has no filtering flag of its own — it always writes one row per experiment. To exclude experiments, open the CSV it writes in a spreadsheet editor and delete the rows you don't want before running `download`, since `download --csv` processes every remaining row.
+    `query` has filter flags for experiment date and time, scanner, StudyDescription, site, operator, subject or experiment ID or label, or StudyInstanceUID (`--accession`), and subject sex, handedness and age. For example, `query PROJECT -o OUT --scanner prisma --date 2024` keeps only 2024 experiments on a Prisma. `--sex` keeps an experiment if either XNAT's gender or the DICOM PatientSex matches. Age, scanner, site, operator and time come from the DICOM header first, then XNAT. Filters work on whole experiments, not single scans. For anything the filters can't express, open the CSV in a spreadsheet editor and delete the rows you don't want before running `download`, since `download --csv` processes every remaining row.
 
     **References:**
 
+    - [`xnatbidscli query` — Filters](cli/query.md#filters)
     - [Manual Steps — between query and download](manual.md#1-between-query-and-download)
     - [Using Excel](excel.md)
+
+??? question "How do I know the query command is still working?"
+
+    In a terminal, `query` shows a `Querying PROJECT: N experiment(s) checked, N matched, elapsed Ns` line that updates every 5 seconds. When it finishes, it prints how many seconds it took. Large projects can take a while, because each experiment needs three REST calls. Filters shorten the run.
+
+    **References:**
+
+    - [`xnatbidscli query`](cli/query.md)
 
 ??? question "Can I import data as ZIP files that are not on XNAT?"
 

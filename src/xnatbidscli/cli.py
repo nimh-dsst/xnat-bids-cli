@@ -8,7 +8,13 @@ from .login import login_cmd
 from .mriconfig import mriconfig_cmd
 from .mriconvert import mriconvert_cmd
 from .physioconvert import physioconvert_cmd
-from .query import query_cmd
+from .query import (
+    date_filter,
+    handedness_filter,
+    query_cmd,
+    sex_filter,
+    time_filter,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,6 +55,55 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="OUTPUT_DIR",
         help="Directory to write the CSV file into.",
     )
+    query_filters = query_parser.add_argument_group(
+        "filters",
+        "Keep only matching experiments. Different flags must all match; "
+        "several values for one flag match if any does. Experiments with a "
+        "blank value for a filtered field are dropped.",
+    )
+    query_filters.add_argument(
+        "--accession", nargs="+", metavar="ID",
+        help="Subject IDs or labels, experiment IDs or labels, or "
+        "StudyInstanceUIDs (STUDY_UID), exact match. A subject keeps all "
+        "of its experiments.",
+    )
+    query_filters.add_argument(
+        "--date", nargs="+", type=date_filter, metavar="DATE",
+        help="Experiment date as MM, YYYY, YYYYMM or YYYYMMDD.",
+    )
+    query_filters.add_argument(
+        "--time", nargs="+", type=time_filter, metavar="TIME",
+        help="Experiment start time as HH, HHMM or HHMMSS.",
+    )
+    query_filters.add_argument(
+        "--scanner", nargs="+", metavar="TEXT",
+        help="Substring of the scanner name, manufacturer or model.",
+    )
+    query_filters.add_argument(
+        "--study", nargs="+", metavar="TEXT",
+        help="Substring of the DICOM StudyDescription.",
+    )
+    query_filters.add_argument(
+        "--site", nargs="+", metavar="TEXT",
+        help="Substring of the acquisition site.",
+    )
+    query_filters.add_argument(
+        "--operator", nargs="+", metavar="TEXT",
+        help="Substring of the scanner operator.",
+    )
+    query_filters.add_argument(
+        "--sex", nargs="+", type=sex_filter, metavar="SEX",
+        help="M/F/O or male/female/other. Keeps an experiment if either "
+        "XNAT_GENDER or DICOM_SEX matches.",
+    )
+    query_filters.add_argument(
+        "--handedness", nargs="+", type=handedness_filter, metavar="{L,R,A,U}",
+        help="Subject handedness: L(eft), R(ight), A(mbidextrous), U(nknown).",
+    )
+    query_filters.add_argument(
+        "--age", nargs="+", type=int, metavar="YEARS",
+        help="Age in whole years at the experiment.",
+    )
     query_parser.set_defaults(func=query_cmd)
 
     download_parser = subparsers.add_parser(
@@ -69,12 +124,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--accession",
         dest="accession",
         metavar="ACCESSION",
-        help="Download by a single unique XNAT ID, with no PROJECT/SUBJECT "
-        "needed. If it identifies a subject, every experiment for that "
-        "subject is downloaded (--rename-experiment is not allowed, since "
-        "a subject may have more than one experiment). If it identifies an "
-        "experiment, only that one is downloaded. Must be an XNAT ID, not "
-        "a label (labels are only unique within their parent).",
+        help="Download by one subject ID or label, experiment ID or label, "
+        "or StudyInstanceUID, with no PROJECT/SUBJECT needed. A subject "
+        "downloads every experiment for that subject (--rename-experiment "
+        "is not allowed, since a subject may have more than one "
+        "experiment); an experiment downloads only that one. A label that "
+        "matches more than one subject/experiment on the server is an "
+        "error listing the matches.",
     )
     download_source.add_argument(
         "-c",

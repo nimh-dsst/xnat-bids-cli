@@ -9,7 +9,9 @@ Some steps in the `xnatbidscli` workflow require a human to fill in values by ha
 
 ## 1. Between query and download
 
-Before handing the [`xnatbidscli query`](cli/query.md) CSV to [`xnatbidscli download`](cli/download.md), review it by hand: `download --csv` processes every row in the file, so any row that should not be pulled down (a subject withdrawn from the study, an experiment outside the date range you care about, a duplicate session, etc.) must be deleted from the CSV first — there is no in-tool filtering flag. This is also where the on-disk renaming below is filled in. Both edits are ordinary spreadsheet work on the CSV `query` wrote, and neither step is reversible by `download` itself, so keep the original CSV if you want an audit trail of what was excluded.
+Before handing the [`xnatbidscli query`](cli/query.md) CSV to [`xnatbidscli download`](cli/download.md), review it by hand: `download --csv` processes every row in the file, so any row that should not be pulled down (a subject withdrawn from the study, an experiment outside the date range you care about, a duplicate session, etc.) must be deleted from the CSV first, unless a [`query` filter](cli/query.md#filters) already excluded it. This is also where the on-disk renaming below is filled in. Both edits are ordinary spreadsheet work on the CSV `query` wrote, and neither step is reversible by `download` itself, so keep the original CSV if you want an audit trail of what was excluded.
+
+> **Warning:** Treat the `query` CSV and every edited copy of it as confidential research data. XNAT sometimes stores Medical Record Numbers (MRNs), scan dates, age at scan and other personally identifiable information (PII), and `query` writes all of it to the CSV before anything is downloaded. On Linux and macOS, `query` creates the CSV readable and writable only by its owner (`rw-------`). To share it with study staff, change its group (`chgrp`) and permissions (`chmod g+r`) deliberately, and be conscious of who can read every copy you save. Don't email it or leave it in a shared or synced folder that people outside the study can open. See the [`query` warning](cli/query.md) for the columns involved.
 
 ### Renaming SUBJECT/EXPERIMENT during download
 
@@ -24,6 +26,8 @@ Either way, the same formatting rule applies:
 - Experiment rename — if the value does not already start with `ses-`, `ses-` is prepended.
 
 XNAT itself is always queried using the original `SUBJECT_LABEL`/`EXPERIMENT_LABEL` (or, in `-1`/`--accession` mode, the original/resolved `SUBJECT`/`EXPERIMENT` values); only the on-disk directory name (and, with `-a/--archive`, the archive filename and, with `-l/--log`, the log's `SUBJECT`/`EXPERIMENT` columns) reflects the rename.
+
+> **Warning:** Without a rename, `download` uses the XNAT labels as-is for directory names, `-a/--archive` filenames and `-l/--log` CSVs, and later commands carry those names into their own outputs. If your labels contain MRNs or other identifiers, fill in `SUBJECT_BIDS_RENAME` and `EXPERIMENT_BIDS_RENAME` for every row before downloading.
 
 ### Blank vs. filled behavior
 

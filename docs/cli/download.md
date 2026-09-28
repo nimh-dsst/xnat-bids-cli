@@ -1,10 +1,10 @@
 # `xnatbidscli download`
 
-Downloads every file belonging to one XNAT experiment (single-experiment mode, `-1`), one unique accession number (`--accession`), or every experiment listed in an `xnatbidscli query` CSV (batch mode, `--csv`). Each experiment is fetched as whole-experiment zip archives rather than one HTTP request per file.
+Downloads every file belonging to one XNAT experiment (single-experiment mode, `-1`), one accession (`--accession`: a subject or experiment ID or label, or a StudyInstanceUID), or every experiment listed in an `xnatbidscli query` CSV (batch mode, `--csv`). Each experiment is fetched as whole-experiment zip archives rather than one HTTP request per file.
 
 1. Loads credentials from `~/.xnatbidscli/credentials.cfg`; if the file is missing or incomplete, exits with a message telling you to run `xnatbidscli login`.
 2. Connects to the stored server via PyXNAT.
-3. For each experiment, walks `project → subject → experiment`, then issues zip requests against XNAT's REST API: one bulk request for all scans, and one request per session-level resource (XNAT has no bulk "all resources" export endpoint, unlike scans). With `--accession`, an extra lookup happens first: the given ID is checked against XNAT's server-wide `/subjects` listing, then its `/experiments` listing, to find which project (and, for an experiment accession, which subject) it belongs to. This works with a bare XNAT ID because IDs are unique across the whole server; labels are not (a label is only unique within its parent), so `--accession` does not accept labels — use `-1` for that.
+3. For each experiment, walks `project → subject → experiment`, then issues zip requests against XNAT's REST API: one bulk request for all scans, and one request per session-level resource (XNAT has no bulk "all resources" export endpoint, unlike scans). With `--accession`, an extra server-wide lookup happens first, in this order: subject ID, experiment ID, study UID (XNAT's stored session `UID`), then subject and experiment labels together. IDs and UIDs are unique across the server. Labels are only unique within their parent, so a label that matches more than one subject or experiment exits with an error listing each match's XNAT ID, project and subject; rerun with one of those IDs. A UID only matches sessions where XNAT stored it.
 4. Each zip is extracted directly into `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, following XNAT's own scan/resource folder naming (not a custom path scheme), then discarded. If a resource resolves to a single file, XNAT sometimes streams that file directly instead of wrapping it in a zip; this is detected and the file is saved as-is rather than failing the experiment. If some resources download successfully and others fail, the successful ones are still kept and the experiment is reported as `FAILURE` with each failing resource named in the error.
 
     `PROJECT` is the canonical XNAT project ID; `SUBJECT` and `EXPERIMENT` are the user-facing labels emitted by `xnatbidscli query`, unless overridden by that row's `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` values in `--csv` mode, or by `--rename-subject`/`--rename-experiment` in `-1`/`--accession` mode (see [Manual Interventions](../manual.md)) — XNAT is still queried using the original labels either way. In `--accession` mode, the resolved XNAT IDs (not labels) are used both to query XNAT and, absent a rename, as the on-disk `SUBJECT`/`EXPERIMENT` directory names.
@@ -18,10 +18,10 @@ xnatbidscli download -1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR
 # Single experiment, renamed on disk
 xnatbidscli download -1 PROJECT SUBJECT EXPERIMENT -o OUTPUT_DIR --rename-subject 01 --rename-experiment baseline
 
-# All experiments for one subject, by that subject's accession number alone
+# All experiments for one subject, by its XNAT ID (or label) alone
 xnatbidscli download --accession XNAT_S00001 -o OUTPUT_DIR
 
-# One experiment, by its accession number alone
+# One experiment, by its XNAT ID, label or StudyInstanceUID alone
 xnatbidscli download --accession XNAT_E00042 -o OUTPUT_DIR --rename-experiment baseline
 
 # Batch from a query CSV
@@ -36,7 +36,7 @@ xnatbidscli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR -a -d
 | Argument | Description |
 | --- | --- |
 | `-1 PROJECT SUBJECT EXPERIMENT` | Download a single experiment. Each value may be either the XNAT ID or the user-facing label. |
-| `--accession ACCESSION` | Download by a single unique XNAT ID, with no `PROJECT`/`SUBJECT` needed — must be an ID, not a label (labels aren't unique server-wide). If `ACCESSION` identifies a subject, every experiment for that subject is downloaded; if it identifies an experiment, only that one is. |
+| `--accession ACCESSION` | Download by one subject ID or label, experiment ID or label, or StudyInstanceUID, with no `PROJECT`/`SUBJECT` needed. Matching is exact and case-insensitive. If `ACCESSION` identifies a subject, every experiment for that subject is downloaded; if it identifies an experiment, only that one is. A label matching more than one subject or experiment on the server is an error that lists the matches. |
 | `--rename-subject` | *Optional, `-1`/`--accession` only.* Rename the on-disk `SUBJECT` directory to this value (`sub-` prepended if missing) — see [Manual Interventions](../manual.md). Errors with `--csv`. |
 | `--rename-experiment` | *Optional, `-1` or an experiment `--accession` only.* Rename the on-disk `EXPERIMENT` directory to this value (`ses-` prepended if missing) — see [Manual Interventions](../manual.md). Errors with `--csv` or a subject `--accession` (which may resolve to more than one experiment). |
 | `-c`, `--csv`, `-i`, `--input` | Path to a CSV file (`xnatbidscli query` output) listing experiments to download. Must contain the columns `PROJECT`, `SUBJECT_LABEL`, `EXPERIMENT_LABEL`. An `ESTIMATED_SIZE_BYTES` column, if present, drives the per-experiment progress display below. `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` columns, if present, rename the on-disk `SUBJECT`/`EXPERIMENT` directories — see [Manual Interventions](../manual.md). Any other columns (e.g., `SUBJECT_ID`, `EXPERIMENT_ID`, `EXPERIMENT_DATE`) are ignored. |

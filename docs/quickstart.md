@@ -26,8 +26,10 @@ Credentials verified and saved to ~/.xnatbidscli/credentials.cfg
 
 ```shell
 > uv run xnatbidscli query PROJECT_ID -o ~/data/xnat
-Wrote 100 row(s) to ~/data/xnat/PROJECT-PROJECT_ID_20260916_120000.csv
+Took 95 second(s) to write 100 row(s) to ~/data/xnat/PROJECT-PROJECT_ID_20260916_120000.csv
 ```
+
+> **Warning:** The query CSV can contain personally identifiable information (PII) from XNAT, such as Medical Record Numbers (MRNs), scan dates and age at scan. On Linux and macOS it is created readable only by its owner (`rw-------`); to share it, change its group and permissions deliberately. If subject or experiment labels contain MRNs, fill in the `SUBJECT_BIDS_RENAME` and `EXPERIMENT_BIDS_RENAME` columns before step 3. Otherwise those labels become folder names and appear in download logs. See [`xnatbidscli query`](cli/query.md) for details.
 
 ## 3. Downloading a project
 
@@ -53,7 +55,7 @@ Instead of a whole-project CSV, `-1 PROJECT SUBJECT EXPERIMENT` downloads a sing
 uv run xnatbidscli download --accession XNAT_ID -o ~/data/xnat -n 8 -l --rename-subject sub-01 --rename-experiment ses-01
 ```
 
-Using the `--accession XNAT_ID` downloads by a bare XNAT accession number alone.
+`--accession` downloads by a subject or experiment ID or label, or a StudyInstanceUID, with no project or subject needed.
 
 ## 4. Creating a "starter" Dcm2Bids configuration JSON file
 

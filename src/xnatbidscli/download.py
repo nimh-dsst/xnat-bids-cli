@@ -734,25 +734,24 @@ def _run_csv(
 def _resolve_accession(
     interface: Interface, accession: str
 ) -> tuple[str, str, str, str | None]:
-    """Resolve a unique XNAT accession number to its project/subject/experiment.
+    """Resolve an accession to its project/subject/experiment, server-wide.
 
-    Tries `accession` as a subject ID, then as an experiment ID — XNAT IDs
-    are unique across the whole server regardless of datatype, so no
-    project needs to be known up front. pyxnat has no built-in server-wide
-    subject lookup (only ``select.project()``/``select.experiment()`` are
-    exposed at the root), so this reaches XNAT's root-level ``/subjects``
-    and ``/experiments`` listings directly via ``interface._get_json``, the
-    same primitive used elsewhere in this module for endpoints pyxnat
-    doesn't wrap.
+    Tries, in order: subject ID, experiment ID, study UID (XNAT's stored
+    session ``UID``), then experiment and subject labels together. IDs and
+    UIDs are unique across the server; labels are only unique within their
+    parent, so a label matching more than one subject/experiment exits with
+    the list of matches. pyxnat has no server-wide subject lookup, so this
+    reaches XNAT's root-level ``/subjects`` and ``/experiments`` listings
+    via ``interface._get_json``. Each listing is also filtered here with an
+    exact, case-insensitive match, in case the server ignores or loosens
+    the query-string filter.
 
     Parameters
     ----------
     interface : Interface
         Connected pyxnat interface.
     accession : str
-        The unique XNAT ID to resolve. Not a label — labels are only
-        unique within their parent (subject labels within a project,
-        experiment labels within a subject), not server-wide.
+        A subject ID or label, experiment ID or label, or StudyInstanceUID.
 
     Returns
     -------
@@ -762,28 +761,56 @@ def _resolve_accession(
     """
     interface._get_entry_point()
     encoded = quote(accession, safe="")
+    wanted = accession.strip().lower()
 
-    try:
+    def lookup(kind: str, field: str, columns: str) -> list[dict]:
         rows = interface._get_json(
-            f"{interface._entry}/subjects?ID={encoded}&columns=ID,project&format=json"
+            f"{interface._entry}/{kind}?{field}={encoded}"
+            f"&columns={columns}&format=json"
         )
+        return [r for r in rows if (r.get(field) or "").strip().lower() == wanted]
+
+    def as_experiment(r: dict) -> tuple[str, str, str, str]:
+        return ("experiment", r["project"], r["subject_ID"], r["ID"])
+
+    exp_cols = "ID,label,project,subject_ID"
+    try:
+        rows = lookup("subjects", "ID", "ID,project")
         if rows:
             return ("subject", rows[0]["project"], rows[0]["ID"], None)
-
-        rows = interface._get_json(
-            f"{interface._entry}/experiments?ID={encoded}"
-            "&columns=ID,project,subject_ID&format=json"
-        )
+        rows = lookup("experiments", "ID", exp_cols)
         if rows:
-            return (
-                "experiment", rows[0]["project"], rows[0]["subject_ID"], rows[0]["ID"]
-            )
+            return as_experiment(rows[0])
+        rows = lookup("experiments", "UID", exp_cols + ",UID")
+        if len(rows) == 1:
+            return as_experiment(rows[0])
+        uid_rows = rows
+        exp_rows = lookup("experiments", "label", exp_cols)
+        subj_rows = lookup("subjects", "label", "ID,label,project")
     except Exception as e:
         sys.exit(f"Error: could not resolve accession '{accession}': {e}")
 
+    matches = [
+        (f"experiment {r['ID']} (project {r['project']}, subject {r['subject_ID']})",
+         as_experiment(r))
+        for r in uid_rows + exp_rows
+    ] + [
+        (f"subject {r['ID']} (project {r['project']})",
+         ("subject", r["project"], r["ID"], None))
+        for r in subj_rows
+    ]
+    if len(matches) == 1:
+        return matches[0][1]
+    if not matches:
+        sys.exit(
+            f"Error: accession '{accession}' not found as a subject ID or "
+            "label, experiment ID or label, or study UID on the configured "
+            "server."
+        )
+    listing = "\n".join(f"  {what}" for what, _ in matches)
     sys.exit(
-        f"Error: accession '{accession}' not found as either a subject or "
-        "an experiment on the configured server."
+        f"Error: accession '{accession}' matches more than one subject or "
+        f"experiment:\n{listing}\nRerun with one of the XNAT IDs above."
     )
 
 

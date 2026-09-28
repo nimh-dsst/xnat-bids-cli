@@ -24,6 +24,7 @@ This is a manual test plan for exercising every `xnatbidscli` subcommand and its
 - [ ] `xnatbidscli query PROJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_<YYYYMMDD_HHMMSS>.csv` with header `PROJECT,SUBJECT_LABEL,SUBJECT_ID,SUBJECT_BIDS_RENAME,EXPERIMENT_LABEL,EXPERIMENT_ID,EXPERIMENT_DATE,EXPERIMENT_BIDS_RENAME,ESTIMATED_SIZE_BYTES` and one row per experiment in the project
 - [ ] `SUBJECT_BIDS_RENAME` and `EXPERIMENT_BIDS_RENAME` are always written blank
 - [ ] `xnatbidscli query PROJECT SUBJECT -o OUTPUT_DIR` writes `OUTPUT_DIR/PROJECT-<PROJECT>_SUBJECT-<SUBJECT>_<YYYYMMDD_HHMMSS>.csv` scoped to that subject's experiments only
+- [ ] On Linux/macOS the query CSV has mode `rw-------` (`0o600`), and stdout ends with an `INFO:` line about changing group/permissions to share it and the PII risk
 - [ ] Supplying a project by its XNAT ID and, separately, by its label both resolve to the same project
 - [ ] Supplying a subject by its XNAT ID and, separately, by its label both resolve to the same subject
 - [ ] A nonexistent `PROJECT` exits with an error and no CSV is written
