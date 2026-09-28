@@ -30,7 +30,8 @@ The project is renamed from `xnatcli` to `xnatbidscli` and is published on PyPI.
 
 ### Changed
 
-- **Breaking:** The CLI command, Python package and config directory are renamed from `xnatcli` to `xnatbidscli`. Re-run `uv sync` to install the new command. See [Installation](installation.md#upgrading-from-xnatcli).
+- **Breaking:** The CLI command, Python package and config directory are renamed from `xnatcli` to `xnatbidscli`. Run `pip install xnatbidscli` (or re-run `uv sync` from source) to install the new command. See [Installation](installation.md#upgrading-from-xnatcli).
+- **Breaking:** `physioconvert` needs Python 3.11. The latest `phys2bids` release caps `numpy` below 1.24, which has no builds for Python 3.12 or newer. On Python 3.11, `xnatbidscli` installs everything, including `phys2bids`, and holds `numpy` at 1.23 and `nibabel` below 5.4. On Python 3.12 or newer, `phys2bids` and `bioread` are left out, every other subcommand works, and `physioconvert` exits with a message. See [Installation](installation.md).
 - **Breaking:** `download` now fetches each experiment as whole-experiment zip archives, not one file at a time. Files are saved using XNAT's own scan and resource folder names. The `PARTIAL` status is removed.
 - **Breaking:** `download -n/--ndownload` now sets how many experiments download in parallel. It is not used with `-1`.
 - **Breaking:** `query` output filenames now end in a `_<YYYYMMDD_HHMMSS>` timestamp, so a new run no longer overwrites an old file.

@@ -8,7 +8,9 @@ pip install xnatbidscli
 
 This puts the `xnatbidscli` command on your `PATH`.
 
-Runtime dependencies (installed automatically): `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`), `pydicom`, `cubids`, `nibabel` (used to read NIfTI shapes for the `mriconvert` `scans.tsv`), `pandas` (used by `bidsmap`), and `phys2bids` (used by `physioconvert` to read physiological recordings and write BIDS physio files; see the note under [`xnatbidscli physioconvert`](cli/physioconvert.md) about its `numpy` pin). `bioread` is also pulled in for `phys2bids` to read BIOPAC `.acq` files (phys2bids imports it lazily but does not depend on it directly).
+> **Note:** [`physioconvert`](cli/physioconvert.md) needs Python 3.11 for now, because the latest `phys2bids` release does not support newer `numpy`. On Python 3.12 or newer, every other subcommand works.
+
+Runtime dependencies (installed automatically): `pyxnat`, `dcm2bids`, `dcm2niix` (the [`dcm2niix`](https://pypi.org/project/dcm2niix/) PyPI package vendors the binary onto your `PATH`), `pydicom`, `cubids`, `nibabel` (used to read NIfTI shapes for the `mriconvert` `scans.tsv`), `pandas` (used by `bidsmap`), and `phys2bids` (used by `physioconvert` to read physiological recordings and write BIDS physio files; Python 3.11 only, see the note under [`xnatbidscli physioconvert`](cli/physioconvert.md)). `bioread` is also pulled in on Python 3.11 for `phys2bids` to read BIOPAC `.acq` files (phys2bids imports it lazily but does not depend on it directly).
 
 ## Latest unreleased features
 

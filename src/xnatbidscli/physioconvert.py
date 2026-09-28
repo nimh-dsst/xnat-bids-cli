@@ -607,8 +607,9 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         from phys2bids.phys2bids import phys2bids as _p2b  # noqa: F401
     except ImportError:
         sys.exit(
-            "Error: phys2bids is required for physioconvert. "
-            "Install it via 'uv sync' or 'pip install phys2bids'."
+            "Error: phys2bids is required for physioconvert. It installs with "
+            "xnatbidscli on Python 3.11 only until phys2bids releases support for "
+            "newer numpy; reinstall xnatbidscli under Python 3.11."
         )
 
     # physioconvert only reads mriconvert_qc.tsv -- it never writes it back.

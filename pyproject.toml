@@ -22,14 +22,20 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
+# phys2bids 2.10.0 (latest release) caps numpy at <1.24, and numpy 1.23 has no
+# wheels past Python 3.11, so phys2bids (and its bioread reader) install only on
+# Python 3.11, where nibabel is held below 5.4 (5.4 needs numpy>=1.25). Drop
+# these markers once phys2bids releases its uncapped master.
 dependencies = [
-    "bioread>=3",
+    "bioread>=3; python_version < '3.12'",
     "cubids>=1.2.1",
     "dcm2bids>=3",
     "dcm2niix>=1.0.20260416",
-    "nibabel>=5.4.2",
+    "nibabel>=5.3,<5.4; python_version < '3.12'",
+    "nibabel>=5.4.2; python_version >= '3.12'",
+    "numpy<2",
     "pandas>=2,<2.4",
-    "phys2bids>=2.10",
+    "phys2bids>=2.10; python_version < '3.12'",
     "pydicom>=2.4",
     "pyxnat>=1.6",
     "requests>=2",
@@ -50,13 +56,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
-
-# phys2bids 2.10.0 caps numpy at <1.24, but nibabel>=5.4.2 needs numpy>=1.25.
-# phys2bids' own source uses no numpy APIs removed in 1.24+, so we override its
-# upper bound. We hold numpy at the 1.x series (phys2bids predates numpy 2.x)
-# while still satisfying nibabel, letting the whole stack share one numpy.
-[tool.uv]
-override-dependencies = ["numpy>=1.25,<2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/xnatbidscli"]

@@ -23,6 +23,15 @@ Click a question to expand its answer, or use the buttons below to open or close
     - [`xnatbidscli query`](cli/query.md)
     - [Manual Steps — renaming during download](manual.md#renaming-subjectexperiment-during-download)
 
+??? question "Why does physioconvert say phys2bids is required?"
+
+    `phys2bids` installs with `xnatbidscli` only on Python 3.11. Its latest release (2.10.0) caps `numpy` below 1.24, and that `numpy` has no builds for Python 3.12 or newer. On 3.12 or newer, every other subcommand works, but `physioconvert` exits with this message. To convert physio, install `xnatbidscli` under Python 3.11. This limit goes away once `phys2bids` makes a new release.
+
+    **References:**
+
+    - [`xnatbidscli physioconvert`](cli/physioconvert.md)
+    - [Installation](installation.md)
+
 ??? question "Where do I store the quality control information for each scan?"
 
     In `mriconvert_qc.tsv`, written by `mriconvert` at `<output>/PROJECT-<PROJECT>_mriconvert_qc.tsv` — one row per converted `.nii.gz` file. Review the data and fill in its `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, and `qc_notes` columns by hand.
