@@ -6,18 +6,15 @@
 
 Full documentation for every `xnatbidscli` subcommand, the on-disk layouts each one produces, and how the pieces fit together lives at [xnatbidscli.readthedocs.io](https://xnatbidscli.readthedocs.io/).
 
-## Prerequisites
-
-- [uv](https://docs.astral.sh/uv/) — manages the Python environment and dependencies.
-- [Git](https://git-scm.com/) — to clone this repository.
-
 ## Installation
 
+Requires Python ≥ 3.11.
+
 ```bash
-uv sync
+pip install xnatbidscli
 ```
 
-See the [Installation guide](https://xnatbidscli.readthedocs.io/installation/) for making the `xnatbidscli` command available on `PATH` and the full list of runtime dependencies.
+See the [Installation guide](https://xnatbidscli.readthedocs.io/installation/) for installing unreleased features from source with uv and the full list of runtime dependencies.
 
 ## Reporting Issues and Feature Requests
 
