@@ -45,9 +45,9 @@ COLUMNS = [
     "AGE",
 ]
 
-# ESTIMATED_SIZE_BYTES values for an experiment that has files but where
-# none of them yielded a usable size, so a bare "0" would be indistinguishable
-# from a genuinely empty experiment.
+# Non-numeric ESTIMATED_SIZE_BYTES values, used instead of a misleading "0"
+# (or a blank cell) when no usable size total was found.
+SIZE_UNKNOWN = "UNKNOWN"
 SIZE_FILES_WITH_UNLABELED_SIZE = "FILES_WITH_UNLABELED_SIZE"
 SIZE_UNPARSEABLE_SIZE_VALUES = "UNPARSEABLE_SIZE_VALUES"
 
@@ -453,7 +453,7 @@ def _age_years(
         return None
 
 
-def _experiment_size_bytes(interface: Interface, exp_obj, label: str) -> int | str | None:
+def _experiment_size_bytes(interface: Interface, exp_obj, label: str) -> int | str:
     """Sum file sizes (bytes) for one experiment.
 
     Uses XNAT's session-wide ``/files`` listing (one row per file, across
@@ -475,24 +475,21 @@ def _experiment_size_bytes(interface: Interface, exp_obj, label: str) -> int | s
 
     Returns
     -------
-    int | str | None
-        Total size in bytes when at least one file contributed a usable
-        size, or when the experiment genuinely has zero files (a real
-        ``0``). ``None`` if the size could not be determined at all (the
-        ``/files`` request itself failed) — written as a blank CSV cell.
-        Otherwise one of two categorical strings, for an experiment that
-        has files but where none of them summed to anything:
+    int | str
+        Total size in bytes when the files' sizes sum to more than zero.
+        Otherwise a categorical string:
         ``SIZE_UNPARSEABLE_SIZE_VALUES`` if any file's ``Size`` value was
         non-numeric (takes priority, since it signals a data anomaly
         rather than a merely-missing value), else
         ``SIZE_FILES_WITH_UNLABELED_SIZE`` if every file's ``Size`` field
-        was missing/empty.
+        was missing/empty, else ``SIZE_UNKNOWN`` (the ``/files`` request
+        failed, listed no files, or its sizes summed to zero).
     """
     try:
         rows = interface._get_json(f"{exp_obj._uri}/files?format=json")
     except Exception as e:
         _status.warn(f"Warning: could not determine size for {label}: {e}")
-        return None
+        return SIZE_UNKNOWN
 
     total = 0
     has_unlabeled = False
@@ -508,13 +505,13 @@ def _experiment_size_bytes(interface: Interface, exp_obj, label: str) -> int | s
             has_unparseable = True
             continue
 
-    if total > 0 or not rows:
+    if total > 0:
         return total
     if has_unparseable:
         return SIZE_UNPARSEABLE_SIZE_VALUES
     if has_unlabeled:
         return SIZE_FILES_WITH_UNLABELED_SIZE
-    return total
+    return SIZE_UNKNOWN
 
 
 def _collect_rows(
@@ -625,8 +622,7 @@ def _collect_rows(
             if filters.age and age not in filters.age:
                 continue
 
-            size = _experiment_size_bytes(interface, exp_obj, label)
-            row["ESTIMATED_SIZE_BYTES"] = "" if size is None else size
+            row["ESTIMATED_SIZE_BYTES"] = _experiment_size_bytes(interface, exp_obj, label)
             rows.append(row)
             _status.matched += 1
 

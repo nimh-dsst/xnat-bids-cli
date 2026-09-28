@@ -32,8 +32,8 @@ This is a manual test plan for exercising every `xnatbidscli` subcommand and its
 - [ ] A project (or subject) that exists but has zero experiments writes a header-only CSV
 - [ ] `EXPERIMENT_DATE` is populated as `YYYYMMDD` when set on the server, and blank when unset/unparseable
 - [ ] `ESTIMATED_SIZE_BYTES` matches the sum of `Size` across `.../experiments/<ID>/files?format=json` for that experiment
-- [ ] If the per-experiment `/files` lookup fails (e.g. a permissions error), that row's `ESTIMATED_SIZE_BYTES` is blank (not `0`), a `Warning:` is printed to stderr, and the run still completes and writes the CSV
-- [ ] An experiment with genuinely zero files shows `ESTIMATED_SIZE_BYTES=0`
+- [ ] If the per-experiment `/files` lookup fails (e.g. a permissions error), that row's `ESTIMATED_SIZE_BYTES` is `UNKNOWN`, a `Warning:` is printed to stderr, and the run still completes and writes the CSV
+- [ ] An experiment whose `/files` listing is empty, or whose sizes sum to zero, shows `ESTIMATED_SIZE_BYTES=UNKNOWN` (never `0`)
 - [ ] An experiment whose files all report a missing/empty `Size` shows `ESTIMATED_SIZE_BYTES=FILES_WITH_UNLABELED_SIZE` (not `0`)
 - [ ] An experiment with at least one non-numeric `Size` value (and no valid ones) shows `ESTIMATED_SIZE_BYTES=UNPARSEABLE_SIZE_VALUES` (not `0`)
 - [ ] An experiment with a mix of valid and unlabeled/unparseable `Size` values shows the sum of just the valid ones (not a categorical string)
@@ -60,8 +60,8 @@ This is a manual test plan for exercising every `xnatbidscli` subcommand and its
 - [ ] Batch mode exits `0` when every row is `COMPLETE` or `EMPTY`
 - [ ] `-n/--ndownload 4` on `-1` mode parallelizes per-file downloads and produces the same file set as `-n 1`
 - [ ] `-n/--ndownload 4` on `--csv` mode parallelizes per-experiment downloads and produces the same file set as `-n 1`
-- [ ] `--csv` mode (`-n 1` or higher) prints a per-experiment progress line roughly every 5 seconds while a download is in flight, e.g. `[PROJECT/SUBJECT/EXPERIMENT] 45.0% (120.0 MB / 265.0 MB est.)`
-- [ ] When the input CSV's `ESTIMATED_SIZE_BYTES` cell is blank/non-numeric for a row, that row's progress line shows only bytes downloaded (no `%`/`est.` total)
+- [ ] `--csv` mode (`-n 1` or higher) prints a per-experiment progress line roughly every 5 seconds while a download is in flight, e.g. `[PROJECT/SUBJECT/EXPERIMENT] 120.0 MB downloaded`
+- [ ] Progress lines never show a `%` or `est.` total, whatever the input CSV's `ESTIMATED_SIZE_BYTES` holds
 - [ ] Under `-n 4`, multiple experiments' progress lines interleave in the output without garbling (one full line per print, no truncation/overlap)
 - [ ] Progress reporting stops (no further lines for that experiment) once its scans+resources download finishes, and does not delay the run's completion
 - [ ] `-l/--log` writes `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` with header `DATESTAMP,USER,PROJECT,SUBJECT,EXPERIMENT,STATUS` and one row per processed experiment

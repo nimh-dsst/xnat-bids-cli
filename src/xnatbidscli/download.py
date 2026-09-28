@@ -255,7 +255,6 @@ class _ExperimentProgress:
 def _report_progress(
     label: str,
     experiment_root: Path,
-    estimated_total: int | None,
     progress: _ExperimentProgress,
     stop_event: threading.Event,
     interval: float = 5.0,
@@ -270,15 +269,7 @@ def _report_progress(
     try:
         while not stop_event.wait(interval):
             downloaded = progress.current_bytes(experiment_root)
-            if estimated_total:
-                pct = min(100.0, downloaded / estimated_total * 100)
-                text = (
-                    f"  [{label}] {pct:5.1f}% "
-                    f"({_human_bytes(downloaded)} / {_human_bytes(estimated_total)} est.)"
-                )
-            else:
-                text = f"  [{label}] {_human_bytes(downloaded)} downloaded"
-            _board.update(label, text)
+            _board.update(label, f"  [{label}] {_human_bytes(downloaded)} downloaded")
     finally:
         _board.finish(label)
 
@@ -518,10 +509,10 @@ def _format_bids_rename(value: str, prefix: str) -> str | None:
 
 def _read_csv_rows(
     path: Path,
-) -> list[tuple[str, str, str, int | None, str | None, str | None]]:
+) -> list[tuple[str, str, str, str | None, str | None]]:
     if not path.exists():
         sys.exit(f"Error: input CSV not found: {path}")
-    rows: list[tuple[str, str, str, int | None, str | None, str | None]] = []
+    rows: list[tuple[str, str, str, str | None, str | None]] = []
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
         required = {"PROJECT", "SUBJECT_LABEL", "EXPERIMENT_LABEL"}
@@ -538,14 +529,6 @@ def _read_csv_rows(
                 sys.exit(
                     f"Error: row {i} of {path} is missing a required value."
                 )
-            raw_size = (row.get("ESTIMATED_SIZE_BYTES") or "").strip()
-            estimated_size: int | None = None
-            if raw_size:
-                try:
-                    estimated_size = int(raw_size)
-                except ValueError:
-                    estimated_size = None
-
             subject_rename: str | None = None
             raw_subject_rename = (row.get("SUBJECT_BIDS_RENAME") or "").strip()
             if raw_subject_rename:
@@ -570,7 +553,7 @@ def _read_csv_rows(
                         "'ses-' prefix)."
                     )
 
-            rows.append((p, s, e, estimated_size, subject_rename, experiment_rename))
+            rows.append((p, s, e, subject_rename, experiment_rename))
     return rows
 
 
@@ -642,7 +625,7 @@ def _run_csv(
     server: str,
     user: str,
     password: str,
-    rows: list[tuple[str, str, str, int | None, str | None, str | None]],
+    rows: list[tuple[str, str, str, str | None, str | None]],
     output_dir: Path,
     n_parallel_experiments: int,
     log_writer: _LogWriter,
@@ -656,8 +639,8 @@ def _run_csv(
         STATUS_EMPTY: 0,
     }
 
-    def _worker(row: tuple[str, str, str, int | None, str | None, str | None]) -> str:
-        p, s, e, estimated_size, subject_rename, experiment_rename = row
+    def _worker(row: tuple[str, str, str, str | None, str | None]) -> str:
+        p, s, e, subject_rename, experiment_rename = row
         local_s = subject_rename or s
         local_e = experiment_rename or e
         iface = _get_thread_interface(server, user, password)
@@ -667,7 +650,7 @@ def _run_csv(
         stop_event = threading.Event()
         monitor = threading.Thread(
             target=_report_progress,
-            args=(label, experiment_root, estimated_size, progress, stop_event),
+            args=(label, experiment_root, progress, stop_event),
             daemon=True,
         )
         monitor.start()
@@ -872,7 +855,7 @@ def _download_accession(
                 "to download."
             )
         rows = [
-            (project, subject_id, label, None, local_subject, None)
+            (project, subject_id, label, local_subject, None)
             for label in experiment_labels
         ]
         counts = _run_csv(

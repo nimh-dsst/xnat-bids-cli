@@ -113,3 +113,12 @@ Click a question to expand its answer, or use the buttons below to open or close
 
     - [`xnatbidscli bidsmap` — copy-with-rename](cli/bidsmap.md#copy-with-rename-o-output_dir)
     - [Manual Steps — between physioconvert and bidsmap](manual.md#4-between-physioconvert-and-bidsmap)
+
+??? question "Why doesn't download show a percentage, and why is ESTIMATED_SIZE_BYTES sometimes UNKNOWN?"
+
+    The size `query` gets from XNAT's file listing often does not match the size of the zip that `download` fetches, so any percentage based on it would be misleading. `download` instead shows how much has been downloaded so far, and it ignores `ESTIMATED_SIZE_BYTES`. `query` writes `UNKNOWN` instead of `0` or a blank cell when it can't find a usable size, because a `0` from XNAT does not reliably mean the experiment is empty.
+
+    **References:**
+
+    - [`xnatbidscli query`](cli/query.md)
+    - [`xnatbidscli download` — progress](cli/download.md#download-progress-csv-mode-and-a-multi-experiment-accession)
