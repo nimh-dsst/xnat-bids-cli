@@ -21,6 +21,7 @@ Planned as 2.0.0. The project is renamed from `xnatcli` to `xnatbidscli` and wil
 - `mriconvert` prints an elapsed-time line every 5 seconds while `dcm2bids` runs.
 - `query` shows a status line while it runs, updated every 5 seconds, with the elapsed time and the number of experiments checked and matched. It only appears when stdout is a terminal.
 - `mriconvert_qc.json` records a `LastModified` timestamp for `Dcm2BidsConfigPath`.
+- `mriconvert` backs up an existing `mriconvert_qc.tsv` to `OUTPUT_DIR/mriconvert_qc_backups/PROJECT-<P>_mriconvert_qc_<YYYYMMDD_HHMMSS>.tsv` before overwriting it with different content.
 - `physioconvert` has a new `SKIPPED` status. It skips an association when its output `_physio.tsv.gz` already exists and is valid.
 - Saved credentials at `~/.xnatcli/credentials.cfg` move automatically to `~/.xnatbidscli/credentials.cfg` the first time a command needs them.
 - New docs pages: [Manual Steps](manual.md), [Frequently Asked Questions](faq.md) and [Using Excel](excel.md). The [`query`](cli/query.md), [Manual Steps](manual.md) and [Quickstart](quickstart.md) pages now warn that the query CSV can contain PII, and that unrenamed labels carry it into `download` folder names and logs. There is also a "Project feedback" section on the [Overview](index.md) and a GitHub repository link on every page.

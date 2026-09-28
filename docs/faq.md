@@ -27,6 +27,8 @@ Click a question to expand its answer, or use the buttons below to open or close
 
     In `mriconvert_qc.tsv`, written by `mriconvert` at `<output>/PROJECT-<PROJECT>_mriconvert_qc.tsv` — one row per converted `.nii.gz` file. Review the data and fill in its `recommend_for_use`, `complete`, `usable`, `qc_rating`, `rating_reason`, and `qc_notes` columns by hand.
 
+    Whenever `mriconvert` changes an existing `mriconvert_qc.tsv`, it first saves a timestamped copy of the previous version under `<output>/mriconvert_qc_backups/`. If a QC sheet gets damaged, restore the newest good copy from there.
+
     **References:**
 
     - [`xnatbidscli mriconvert` — `mriconvert_qc.tsv`](cli/mriconvert.md#mriconvert_qctsv)

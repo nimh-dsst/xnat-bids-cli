@@ -1,5 +1,6 @@
 import argparse
 import csv
+import io
 import json
 import os
 import re
@@ -419,6 +420,34 @@ def _qc_tsv_path(bids_root: Path) -> Path:
     return bids_root.parent / f"PROJECT-{bids_root.name}_mriconvert_qc.tsv"
 
 
+def _backup_qc_tsv(tsv_path: Path, new_content: str) -> Path | None:
+    """Lazily back up ``tsv_path`` before it is overwritten with ``new_content``.
+
+    Copies the current file to
+    ``OUTPUT_DIR/mriconvert_qc_backups/<stem>_YYYYMMDD_HHMMSS.tsv`` only when it
+    exists and its content differs from ``new_content``, so unchanged reruns
+    don't accumulate duplicate backups. Backups are never pruned.
+
+    Returns
+    -------
+    Path or None
+        The backup path, or None when no backup was needed.
+    """
+    try:
+        with tsv_path.open(newline="", encoding="utf-8") as f:
+            if f.read() == new_content:
+                return None
+    except FileNotFoundError:
+        return None
+
+    backup_dir = tsv_path.parent / "mriconvert_qc_backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = backup_dir / f"{tsv_path.stem}_{ts}{tsv_path.suffix}"
+    shutil.copy2(tsv_path, backup_path)
+    return backup_path
+
+
 def _qc_json_path(bids_root: Path) -> Path:
     """``OUTPUT_DIR/PROJECT-<PROJECT_ID>_mriconvert_qc.json`` for ``bids_root``
     (``OUTPUT_DIR/PROJECT_ID``)."""
@@ -594,7 +623,9 @@ def _generate_scans_tsv(
     rows for files that are newly present on disk (their filename absent from
     the current mriconvert_qc.tsv) are appended. This lets separate sessions be
     converted at different times, appending to mriconvert_qc.tsv without
-    disturbing already-reviewed rows.
+    disturbing already-reviewed rows. Before an existing mriconvert_qc.tsv is
+    overwritten with different content, it is backed up (see
+    ``_backup_qc_tsv``).
 
     ``physio_parent`` and ``dcm2bids_config``, when given, are recorded as the
     ``PhysioParent``/``Dcm2BidsConfigPath`` values in mriconvert_qc.json;
@@ -668,10 +699,18 @@ def _generate_scans_tsv(
                 merged_rows.append(new_by_name[name])
                 added += 1
 
+    buf = io.StringIO(newline="")
+    writer = csv.writer(buf, delimiter="\t")
+    writer.writerow(_SCANS_COLUMNS)
+    writer.writerows(merged_rows)
+    content = buf.getvalue()
+
+    backup_path = _backup_qc_tsv(tsv_path, content)
+    if backup_path is not None:
+        _safe_print(f"Backed up previous {tsv_path.name} to {backup_path}")
+
     with tsv_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f, delimiter="\t")
-        writer.writerow(_SCANS_COLUMNS)
-        writer.writerows(merged_rows)
+        f.write(content)
     if existing is None:
         _safe_print(f"Wrote {tsv_path} ({len(merged_rows)} scan(s))")
     else:
