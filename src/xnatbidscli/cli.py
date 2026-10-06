@@ -197,6 +197,17 @@ def build_parser() -> argparse.ArgumentParser:
         "OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT directory. The SUBJECT and "
         "PROJECT parent directories are also removed if they become empty.",
     )
+    download_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Delete a non-empty OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT "
+        "directory and download it again. Without this flag, such an "
+        "experiment is skipped with a warning (STATUS SKIPPED), along with "
+        "-a/--archive and -d/--delete for it. The directory is deleted only "
+        "after the experiment is found on XNAT. With -a/--archive, an "
+        "existing archive is also replaced, but only after a COMPLETE "
+        "download.",
+    )
     download_parser.set_defaults(func=download_cmd)
 
     mriconfig_parser = subparsers.add_parser(

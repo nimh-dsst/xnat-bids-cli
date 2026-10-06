@@ -20,6 +20,7 @@ from pyxnat.core import uriutil
 from .archive import (
     OK_STATUSES as ARCHIVE_OK_STATUSES,
     archive_experiment,
+    archive_path,
     delete_experiment_dir,
 )
 from .login import load_credentials
@@ -29,8 +30,32 @@ STATUS_COMPLETE = "COMPLETE"
 STATUS_FAILURE = "FAILURE"
 STATUS_NONEXISTENT = "NONEXISTENT"
 STATUS_EMPTY = "EMPTY"
+STATUS_SKIPPED = "SKIPPED"
+STATUS_DUPLICATE = "DUPLICATE"
+STATUS_RENAME_CONFLICT = "RENAME_CONFLICT"
+STATUS_COLLISION = "COLLISION"
 
-_OK_STATUSES = {STATUS_COMPLETE, STATUS_EMPTY}
+_OK_STATUSES = {
+    STATUS_COMPLETE,
+    STATUS_EMPTY,
+    STATUS_SKIPPED,
+    STATUS_DUPLICATE,
+    STATUS_RENAME_CONFLICT,
+    STATUS_COLLISION,
+}
+_SUMMARY_STATUSES = (
+    STATUS_COMPLETE,
+    STATUS_FAILURE,
+    STATUS_NONEXISTENT,
+    STATUS_EMPTY,
+    STATUS_SKIPPED,
+    STATUS_DUPLICATE,
+    STATUS_RENAME_CONFLICT,
+    STATUS_COLLISION,
+)
+
+# (PROJECT, SUBJECT_LABEL, EXPERIMENT_LABEL, SUBJECT_BIDS_RENAME, EXPERIMENT_BIDS_RENAME)
+CsvRow = tuple[str, str, str, str | None, str | None]
 
 _thread_iface = threading.local()
 
@@ -418,6 +443,40 @@ def _extract_zip_flattened_or_rescue(
         zip_path.replace(dest_dir / filename)
 
 
+def _has_contents(path: Path) -> bool:
+    """Return True if `path` is a directory with at least one entry in it."""
+    try:
+        return path.is_dir() and any(path.iterdir())
+    except OSError:
+        return False
+
+
+def _skip_existing(
+    label: str, experiment_root: Path, do_archive: bool, do_delete: bool
+) -> bool:
+    """Warn and return True if `experiment_root` was already downloaded.
+
+    A non-empty experiment directory counts as already downloaded. This is a
+    local check only, made before contacting XNAT. Archiving/deletion are
+    skipped along with the download, so the warning is loud when they were
+    requested.
+    """
+    if not _has_contents(experiment_root):
+        return False
+    _safe_print(
+        f"WARNING: {label}: {experiment_root} already exists and is not "
+        "empty; skipping download. Pass --overwrite to delete it and "
+        "download again."
+    )
+    if do_archive:
+        steps = "ARCHIVE (-a) AND DELETE (-d)" if do_delete else "ARCHIVE (-a)"
+        _safe_print(
+            f"WARNING: {steps} NOT RUN for {label}: its download was skipped, "
+            f"so {experiment_root} and any existing archive were left untouched."
+        )
+    return True
+
+
 def _process_experiment(
     interface: Interface,
     project: str,
@@ -428,6 +487,7 @@ def _process_experiment(
     progress: _ExperimentProgress | None = None,
     local_subject: str | None = None,
     local_experiment: str | None = None,
+    overwrite: bool = False,
 ) -> str:
     """Download one experiment as whole-experiment zip archives.
 
@@ -444,6 +504,10 @@ def _process_experiment(
     `EXPERIMENT_BIDS_RENAME`) name the on-disk directory when they differ
     from `subject`/`experiment`, which are always used to look up the
     experiment on the XNAT server itself.
+
+    With `overwrite`, a non-empty existing experiment directory is deleted
+    before downloading, but only once the experiment is confirmed to exist
+    on XNAT, so a lookup failure never costs the local copy.
     """
     label = f"{project}/{subject}/{experiment}"
     try:
@@ -461,6 +525,13 @@ def _process_experiment(
     experiment_root = (
         output_dir / project / (local_subject or subject) / (local_experiment or experiment)
     )
+    if overwrite and _has_contents(experiment_root):
+        report(f"WARNING: {label}: deleting existing {experiment_root} before re-downloading (--overwrite).")
+        try:
+            shutil.rmtree(experiment_root)
+        except OSError as e:
+            report(f"  Error deleting {experiment_root}: {e}")
+            return STATUS_FAILURE
     experiment_root.mkdir(parents=True, exist_ok=True)
 
     got_scans = False
@@ -507,12 +578,10 @@ def _format_bids_rename(value: str, prefix: str) -> str | None:
     return value if value.startswith(prefix) else prefix + value
 
 
-def _read_csv_rows(
-    path: Path,
-) -> list[tuple[str, str, str, str | None, str | None]]:
+def _read_csv_rows(path: Path) -> list[CsvRow]:
     if not path.exists():
         sys.exit(f"Error: input CSV not found: {path}")
-    rows: list[tuple[str, str, str, str | None, str | None]] = []
+    rows: list[CsvRow] = []
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
         required = {"PROJECT", "SUBJECT_LABEL", "EXPERIMENT_LABEL"}
@@ -557,6 +626,76 @@ def _read_csv_rows(
     return rows
 
 
+def _screen_csv_rows(
+    rows: list[CsvRow],
+) -> tuple[list[CsvRow], list[tuple[CsvRow, str]]]:
+    """Split CSV rows into ones to download and ones skipped with a WARNING.
+
+    An experiment is identified by (PROJECT, SUBJECT_LABEL, EXPERIMENT_LABEL).
+    Every row of an experiment listed more than once is skipped: DUPLICATE
+    if all its rows have the same (normalized) renames, RENAME_CONFLICT if
+    not. Every remaining row whose on-disk directory is shared with a
+    different experiment is skipped as COLLISION.
+
+    Returns
+    -------
+    tuple[list[CsvRow], list[tuple[CsvRow, str]]]
+        Rows to download, and skipped rows paired with their STATUS.
+    """
+    by_experiment: dict[tuple[str, str, str], list[CsvRow]] = {}
+    for row in rows:
+        by_experiment.setdefault(row[:3], []).append(row)
+
+    flagged: dict[tuple[str, str, str], str] = {}
+    for key, group in by_experiment.items():
+        if len(group) < 2:
+            continue
+        label = "/".join(key)
+        if len({row[3:] for row in group}) == 1:
+            flagged[key] = STATUS_DUPLICATE
+            print(
+                f"WARNING: {label} is listed {len(group)} times in the input "
+                "CSV; skipping every instance. Remove the extra row(s) to "
+                "download it."
+            )
+        else:
+            flagged[key] = STATUS_RENAME_CONFLICT
+            renames = "; ".join(
+                f"SUBJECT_BIDS_RENAME={sr or '(blank)'}, "
+                f"EXPERIMENT_BIDS_RENAME={er or '(blank)'}"
+                for _, _, _, sr, er in group
+            )
+            print(
+                f"WARNING: {label} is listed {len(group)} times in the input "
+                "CSV with different SUBJECT_BIDS_RENAME/EXPERIMENT_BIDS_RENAME "
+                f"values ({renames}); skipping every instance. Keep only one "
+                "row to download it."
+            )
+
+    # Compared case-insensitively, since Windows and macOS filesystems would
+    # merge directories that differ only in case.
+    by_local_dir: dict[tuple[str, ...], dict[tuple[str, str, str], str]] = {}
+    for p, s, e, sr, er in rows:
+        local = f"{p}/{sr or s}/{er or e}"
+        key = tuple(part.casefold() for part in (p, sr or s, er or e))
+        by_local_dir.setdefault(key, {})[(p, s, e)] = local
+    for experiments in by_local_dir.values():
+        if len(experiments) < 2:
+            continue
+        labels = ", ".join("/".join(k) for k in experiments)
+        print(
+            f"WARNING: {labels} would all download into "
+            f"{next(iter(experiments.values()))}; skipping all of them. Give "
+            "each a unique SUBJECT_BIDS_RENAME/EXPERIMENT_BIDS_RENAME."
+        )
+        for key in experiments:
+            flagged.setdefault(key, STATUS_COLLISION)
+
+    to_download = [row for row in rows if row[:3] not in flagged]
+    skipped = [(row, flagged[row[:3]]) for row in rows if row[:3] in flagged]
+    return to_download, skipped
+
+
 def _archive_and_maybe_delete(
     output_dir: Path,
     project: str,
@@ -565,12 +704,30 @@ def _archive_and_maybe_delete(
     do_archive: bool,
     do_delete: bool,
     report: Callable[[str], None],
+    overwrite: bool = False,
+    download_status: str = STATUS_COMPLETE,
 ) -> None:
+    """Archive (and with `do_delete`, then delete) one experiment directory.
+
+    With `overwrite`, an existing archive is replaced, but only after a
+    COMPLETE download, so a failed or partial re-download never replaces a
+    good archive.
+    """
     if not do_archive:
         return
     label = f"{project}/{subject}/{experiment}"
+    replace = overwrite and download_status == STATUS_COMPLETE
+    if (
+        overwrite
+        and not replace
+        and archive_path(output_dir, project, subject, experiment).exists()
+    ):
+        report(
+            f"WARNING: not replacing the existing archive for {label} "
+            f"(--overwrite), since its download was {download_status}."
+        )
     a_status, a_detail = archive_experiment(
-        output_dir, project, subject, experiment
+        output_dir, project, subject, experiment, overwrite=replace
     )
     line = f"  archive {label}: {a_status}"
     if a_detail:
@@ -593,15 +750,23 @@ def _run_single(
     do_delete: bool,
     local_subject: str | None = None,
     local_experiment: str | None = None,
+    overwrite: bool = False,
 ) -> str:
     local_s = local_subject or subject
     local_e = local_experiment or experiment
+    label = f"{project}/{subject}/{experiment}"
+    if not overwrite and _skip_existing(
+        label, output_dir / project / local_s / local_e, do_archive, do_delete
+    ):
+        log_writer.write(_logging_now(), project, local_s, local_e, STATUS_SKIPPED)
+        return STATUS_SKIPPED
     iface = Interface(server=server, user=user, password=password)
     try:
         start = _logging_now()
         status = _process_experiment(
             iface, project, subject, experiment, output_dir, _safe_print,
             local_subject=local_s, local_experiment=local_e,
+            overwrite=overwrite,
         )
     finally:
         try:
@@ -617,6 +782,8 @@ def _run_single(
         do_archive,
         do_delete,
         _safe_print,
+        overwrite,
+        status,
     )
     return status
 
@@ -625,27 +792,28 @@ def _run_csv(
     server: str,
     user: str,
     password: str,
-    rows: list[tuple[str, str, str, str | None, str | None]],
+    rows: list[CsvRow],
     output_dir: Path,
     n_parallel_experiments: int,
     log_writer: _LogWriter,
     do_archive: bool,
     do_delete: bool,
+    overwrite: bool = False,
 ) -> dict[str, int]:
-    counts = {
-        STATUS_COMPLETE: 0,
-        STATUS_FAILURE: 0,
-        STATUS_NONEXISTENT: 0,
-        STATUS_EMPTY: 0,
-    }
+    counts = dict.fromkeys(_SUMMARY_STATUSES, 0)
 
-    def _worker(row: tuple[str, str, str, str | None, str | None]) -> str:
+    def _worker(row: CsvRow) -> str:
         p, s, e, subject_rename, experiment_rename = row
         local_s = subject_rename or s
         local_e = experiment_rename or e
-        iface = _get_thread_interface(server, user, password)
         label = f"{p}/{s}/{e}"
         experiment_root = output_dir / p / local_s / local_e
+        if not overwrite and _skip_existing(
+            label, experiment_root, do_archive, do_delete
+        ):
+            log_writer.write(_logging_now(), p, local_s, local_e, STATUS_SKIPPED)
+            return STATUS_SKIPPED
+        iface = _get_thread_interface(server, user, password)
         progress = _ExperimentProgress()
         stop_event = threading.Event()
         monitor = threading.Thread(
@@ -658,14 +826,15 @@ def _run_csv(
             start = _logging_now()
             status = _process_experiment(
                 iface, p, s, e, output_dir, _safe_print, progress,
-                local_s, local_e,
+                local_s, local_e, overwrite,
             )
         finally:
             stop_event.set()
             monitor.join()
         log_writer.write(start, p, local_s, local_e, status)
         _archive_and_maybe_delete(
-            output_dir, p, local_s, local_e, do_archive, do_delete, _safe_print
+            output_dir, p, local_s, local_e, do_archive, do_delete, _safe_print,
+            overwrite, status,
         )
         return status
 
@@ -712,6 +881,33 @@ def _run_csv(
         # Worker threads' Interface objects are GC'd when the pool shuts down.
 
     return counts
+
+
+def _print_summary(
+    heading: str,
+    counts: dict[str, int],
+    log_path: Path | None,
+    do_archive: bool,
+    do_delete: bool,
+) -> int:
+    """Print a batch run's per-STATUS counts and return its exit code.
+
+    Repeats the not-archived warning for SKIPPED experiments at the end,
+    since the per-experiment warnings may have scrolled away.
+    """
+    print(f"\n{heading}")
+    for status in _SUMMARY_STATUSES:
+        print(f"  {status}: {counts[status]}")
+    if do_archive and counts[STATUS_SKIPPED]:
+        steps = "ARCHIVED OR DELETED" if do_delete else "ARCHIVED"
+        print(
+            f"WARNING: {counts[STATUS_SKIPPED]} SKIPPED experiment(s) were NOT "
+            f"{steps}, since their existing directories were left untouched."
+        )
+    if log_path is not None:
+        print(f"Log written to {log_path}")
+    bad = counts[STATUS_FAILURE] + counts[STATUS_NONEXISTENT]
+    return 0 if bad == 0 else 1
 
 
 def _resolve_accession(
@@ -810,6 +1006,7 @@ def _download_accession(
     local_subject: str | None,
     local_experiment: str | None,
     log_path: Path | None,
+    overwrite: bool = False,
 ) -> int:
     """Handle `download --accession`: resolve it, then delegate like -1/--csv.
 
@@ -860,26 +1057,18 @@ def _download_accession(
         ]
         counts = _run_csv(
             server, user, password, rows, output_dir, n_parallel_experiments,
-            log_writer, do_archive, do_delete,
+            log_writer, do_archive, do_delete, overwrite,
         )
-        total = sum(counts.values())
-        print(f"\nProcessed {total} experiment(s) for subject accession {accession}:")
-        for status in (
-            STATUS_COMPLETE,
-            STATUS_FAILURE,
-            STATUS_NONEXISTENT,
-            STATUS_EMPTY,
-        ):
-            print(f"  {status}: {counts[status]}")
-        if log_path is not None:
-            print(f"Log written to {log_path}")
-        bad = counts[STATUS_FAILURE] + counts[STATUS_NONEXISTENT]
-        return 0 if bad == 0 else 1
+        return _print_summary(
+            f"Processed {sum(counts.values())} experiment(s) for subject "
+            f"accession {accession}:",
+            counts, log_path, do_archive, do_delete,
+        )
 
     status = _run_single(
         server, user, password, project, subject_id, experiment_id,
         output_dir, log_writer, do_archive, do_delete,
-        local_subject, local_experiment,
+        local_subject, local_experiment, overwrite,
     )
     print(
         f"Status for accession {accession} "
@@ -958,6 +1147,7 @@ def download_cmd(args: argparse.Namespace) -> int:
             args.delete,
             local_subject,
             local_experiment,
+            args.overwrite,
         )
         print(
             f"Status for {project}/{subject}/{experiment}: {status}"
@@ -980,9 +1170,10 @@ def download_cmd(args: argparse.Namespace) -> int:
             local_subject,
             local_experiment,
             log_path,
+            args.overwrite,
         )
 
-    rows = _read_csv_rows(Path(args.input))
+    rows, screened = _screen_csv_rows(_read_csv_rows(Path(args.input)))
     counts = _run_csv(
         server,
         user,
@@ -993,17 +1184,12 @@ def download_cmd(args: argparse.Namespace) -> int:
         log_writer,
         args.archive,
         args.delete,
+        args.overwrite,
     )
-    total = sum(counts.values())
-    print(f"\nProcessed {total} experiment(s):")
-    for status in (
-        STATUS_COMPLETE,
-        STATUS_FAILURE,
-        STATUS_NONEXISTENT,
-        STATUS_EMPTY,
-    ):
-        print(f"  {status}: {counts[status]}")
-    if log_path is not None:
-        print(f"Log written to {log_path}")
-    bad = counts[STATUS_FAILURE] + counts[STATUS_NONEXISTENT]
-    return 0 if bad == 0 else 1
+    for (p, s, e, sr, er), status in screened:
+        log_writer.write(_logging_now(), p, sr or s, er or e, status)
+        counts[status] += 1
+    return _print_summary(
+        f"Processed {sum(counts.values())} experiment(s):",
+        counts, log_path, args.archive, args.delete,
+    )

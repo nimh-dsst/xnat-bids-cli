@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `download --overwrite` deletes an experiment's existing directory and downloads it again. With `-a/--archive`, it also replaces an existing archive after a `COMPLETE` download.
+- `download --csv` skips with a `WARNING` every row of an experiment listed more than once (`DUPLICATE`, or `RENAME_CONFLICT` when its `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` values differ), and every experiment that would download into the same directory as another (`COLLISION`).
+
+### Changed
+
+- `download` skips an experiment whose directory already exists and is not empty, with a `WARNING` and a new `SKIPPED` status, instead of downloading over it. `-a/--archive` and `-d/--delete` are not run for it, with a louder `WARNING`. Skipped experiments do not change the exit code.
+
 ## [2.0.0] - 2026-09-28
 
 The project is renamed from `xnatcli` to `xnatbidscli` and is published on PyPI. Downloads are faster and more reliable, and you can now rename subjects and experiments between `query` and `download`.

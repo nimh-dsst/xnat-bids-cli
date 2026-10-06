@@ -44,6 +44,7 @@ After an optional `sub-`/`ses-` prefix is stripped, the remaining value must be 
 
 - In `--csv` mode, `download` validates every row of the input CSV before downloading anything; if any `SUBJECT_BIDS_RENAME` or `EXPERIMENT_BIDS_RENAME` value fails this check, the entire run exits with an error and nothing is downloaded. Fix the offending cell(s) in the CSV and re-run `download`.
 - In `-1`/`--accession` mode, an invalid `--rename-subject`/`--rename-experiment` value exits with an error before downloading.
+- In `--csv` mode, an experiment listed on more than one row, with the same or different renames, or two experiments renamed into the same directory, are skipped with a `WARNING` rather than downloaded. See [Repeated experiments in the CSV](cli/download.md#repeated-experiments-in-the-csv).
 
 `--rename-subject`/`--rename-experiment` only apply to `-1`/`--accession` mode; supplying either alongside `--csv` is an error. `--rename-experiment` is additionally rejected when `--accession` resolves to a subject rather than an experiment.
 

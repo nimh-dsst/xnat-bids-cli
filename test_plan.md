@@ -75,6 +75,13 @@ This is a manual test plan for exercising every `xnatbidscli` subcommand and its
 - [ ] `-1` single-experiment mode ignores `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` entirely (no CSV involved)
 - [ ] `-a/--archive` produces `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz` after each experiment downloads
 - [ ] Re-running with `-a/--archive` against an experiment whose archive already exists skips archiving with a warning (does not overwrite)
+- [ ] Re-running against an experiment whose directory exists and is not empty prints a `WARNING`, reports `SKIPPED`, does not contact XNAT for it, and exits `0`; an empty directory still downloads
+- [ ] With `-a` (and `-d`), a `SKIPPED` experiment prints a louder `WARNING` that archive/delete were not run, leaves its directory and archive untouched, and the summary repeats the count
+- [ ] `--overwrite` deletes a non-empty experiment directory and downloads it fresh; a `NONEXISTENT` experiment's local directory is not deleted
+- [ ] `--overwrite -a` replaces an existing archive after a `COMPLETE` download (archive `COMPLETE — replaced existing archive`); after a `FAILURE`/`EMPTY` download it keeps the old archive with a `WARNING`
+- [ ] A CSV listing the same experiment twice with the same renames (`01` vs `sub-01` counts as the same) prints one `WARNING` and reports both rows `DUPLICATE`, downloading neither
+- [ ] A CSV listing the same experiment twice with different renames (including blank vs. filled) prints one `WARNING` and reports both rows `RENAME_CONFLICT`, downloading neither
+- [ ] Two different experiments renamed into the same directory (also when differing only in case) print one `WARNING` and are both reported `COLLISION`, downloading neither
 - [ ] `-d/--delete` without `-a/--archive` fails immediately with "requires -a/--archive"
 - [ ] `-a -d` together delete `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` only after a successful archive
 - [ ] `-a -d` also removes the `SUBJECT` and then `PROJECT` parent directories if they become empty

@@ -21,20 +21,26 @@ def archive_path(
 
 
 def archive_experiment(
-    data_root: Path, project: str, subject: str, experiment: str
+    data_root: Path,
+    project: str,
+    subject: str,
+    experiment: str,
+    overwrite: bool = False,
 ) -> tuple[str, str | None]:
     """Tar+gzip data_root/PROJECT/SUBJECT/EXPERIMENT into data_root/archive/.
 
     Returns (status, detail). Existing archives are left untouched and reported
-    as SKIPPED; the tarball is written to a .tmp sibling and renamed into place
-    only on success so an interrupted run never leaves a partial file behind.
+    as SKIPPED unless `overwrite` is set; the tarball is written to a .tmp
+    sibling and renamed into place only on success so an interrupted run never
+    leaves a partial file behind (or loses the archive it was replacing).
     """
     src = data_root / project / subject / experiment
     if not src.is_dir():
         return STATUS_NONEXISTENT, f"source directory not found: {src}"
 
     dest = archive_path(data_root, project, subject, experiment)
-    if dest.exists():
+    replacing = dest.exists()
+    if replacing and not overwrite:
         return STATUS_SKIPPED, f"archive already exists: {dest}"
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +56,8 @@ def archive_experiment(
             except Exception:
                 pass
         return STATUS_FAILURE, f"error creating archive: {e}"
+    if replacing:
+        return STATUS_COMPLETE, f"replaced existing archive: {dest}"
     return STATUS_COMPLETE, None
 
 

@@ -4,12 +4,14 @@ Downloads every file belonging to one XNAT experiment (single-experiment mode, `
 
 1. Loads credentials from `~/.xnatbidscli/credentials.cfg`; if the file is missing or incomplete, exits with a message telling you to run `xnatbidscli login`.
 2. Connects to the stored server via PyXNAT.
-3. For each experiment, walks `project → subject → experiment`, then issues zip requests against XNAT's REST API: one bulk request for all scans, and one request per session-level resource (XNAT has no bulk "all resources" export endpoint, unlike scans). With `--accession`, an extra server-wide lookup happens first, in this order: subject ID, experiment ID, study UID (XNAT's stored session `UID`), then subject and experiment labels together. IDs and UIDs are unique across the server. Labels are only unique within their parent, so a label that matches more than one subject or experiment exits with an error listing each match's XNAT ID, project and subject; rerun with one of those IDs. A UID only matches sessions where XNAT stored it.
-4. Each zip is extracted directly into `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, following XNAT's own scan/resource folder naming (not a custom path scheme), then discarded. If a resource resolves to a single file, XNAT sometimes streams that file directly instead of wrapping it in a zip; this is detected and the file is saved as-is rather than failing the experiment. If some resources download successfully and others fail, the successful ones are still kept and the experiment is reported as `FAILURE` with each failing resource named in the error.
+3. In `--csv` mode, every row is screened before anything downloads, and repeated or colliding experiments are skipped (see [Repeated experiments in the CSV](#repeated-experiments-in-the-csv)).
+4. For each experiment, if `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` (using any rename) already exists and is not empty, it counts as already downloaded. A `WARNING` is printed and the experiment is reported `SKIPPED` without contacting XNAT. `-a`/`-d` are not run for it either, and a second, louder `WARNING` says so. Pass `--overwrite` to delete the directory and download it again instead. The directory is deleted only after the experiment is found on XNAT. An empty directory does not count as downloaded. Because `-d` removes the directory, re-running after `-a -d` downloads those experiments again.
+5. For each experiment, walks `project → subject → experiment`, then issues zip requests against XNAT's REST API: one bulk request for all scans, and one request per session-level resource (XNAT has no bulk "all resources" export endpoint, unlike scans). With `--accession`, an extra server-wide lookup happens first, in this order: subject ID, experiment ID, study UID (XNAT's stored session `UID`), then subject and experiment labels together. IDs and UIDs are unique across the server. Labels are only unique within their parent, so a label that matches more than one subject or experiment exits with an error listing each match's XNAT ID, project and subject; rerun with one of those IDs. A UID only matches sessions where XNAT stored it.
+6. Each zip is extracted directly into `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT/`, following XNAT's own scan/resource folder naming (not a custom path scheme), then discarded. If a resource resolves to a single file, XNAT sometimes streams that file directly instead of wrapping it in a zip; this is detected and the file is saved as-is rather than failing the experiment. If some resources download successfully and others fail, the successful ones are still kept and the experiment is reported as `FAILURE` with each failing resource named in the error.
 
     `PROJECT` is the canonical XNAT project ID; `SUBJECT` and `EXPERIMENT` are the user-facing labels emitted by `xnatbidscli query`, unless overridden by that row's `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` values in `--csv` mode, or by `--rename-subject`/`--rename-experiment` in `-1`/`--accession` mode (see [Manual Interventions](../manual.md)) — XNAT is still queried using the original labels either way. In `--accession` mode, the resolved XNAT IDs (not labels) are used both to query XNAT and, absent a rename, as the on-disk `SUBJECT`/`EXPERIMENT` directory names.
 
-5. With `-a/--archive`, after each experiment is downloaded, its `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory (using any rename override) is tar+gzipped to `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz`. An existing archive at that path is left untouched and reported as `SKIPPED`. With `-d/--delete` (requires `-a/--archive`), the `EXPERIMENT` directory is removed once its archive is `COMPLETE` or `SKIPPED`; the `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result.
+7. With `-a/--archive`, after each experiment is downloaded, its `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory (using any rename override) is tar+gzipped to `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz`. An existing archive at that path is left untouched and reported as `SKIPPED`. With `-d/--delete` (requires `-a/--archive`), the `EXPERIMENT` directory is removed once its archive is `COMPLETE` or `SKIPPED`; the `SUBJECT` and then `PROJECT` parent directories are also removed if they become empty as a result.
 
 ```bash
 # Single experiment
@@ -45,6 +47,7 @@ xnatbidscli download --csv PATH/TO/QUERY.csv -o OUTPUT_DIR -a -d
 | `-l`, `--log` | *Optional.* Write a per-experiment log CSV to `OUTPUT_DIR/log/download_<YYYYMMDD_HHMMSS>_log.csv` (local time, captured at run start). |
 | `-a`, `--archive` | *Optional.* After downloading each experiment, tar+gzip its `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory into `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz`. Existing archives are skipped with a warning. |
 | `-d`, `--delete` | *Optional.* Requires `-a/--archive`. After a successful archive, delete the `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory. Empty `SUBJECT` and `PROJECT` parent directories are also pruned. |
+| `--overwrite` | *Optional.* Delete a non-empty `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory and download it again, instead of skipping it as `SKIPPED`. The directory is deleted only after the experiment is found on XNAT. With `-a/--archive`, an existing archive is also replaced, but only after a `COMPLETE` download; otherwise it is kept, with a `WARNING`. |
 
 ## Per-experiment STATUS (and exit code)
 
@@ -56,17 +59,31 @@ In `--csv` mode, and in `--accession` mode when it resolves to a subject, the ru
 | `FAILURE` | The experiment exists, but a zip request raised an error. If the underlying HTTP connection was dropped mid-download (a transient network/server timeout), the reported error names this cause explicitly rather than a generic message. |
 | `NONEXISTENT` | The experiment lookup did not find anything on the server. |
 | `EMPTY` | The experiment exists but has no scans and no session-level resources. |
+| `SKIPPED` | Its experiment directory already existed and was not empty, so nothing was downloaded, archived or deleted. Use `--overwrite` to download it again. |
+| `DUPLICATE` | `--csv` only. The experiment is listed more than once with the same renames; every instance is skipped. |
+| `RENAME_CONFLICT` | `--csv` only. The experiment is listed more than once with different renames; every instance is skipped. |
+| `COLLISION` | `--csv` only. Different experiments would download into the same directory; all of them are skipped. |
 
-Exit code is `0` if every processed experiment is `COMPLETE` or `EMPTY`, and `1` otherwise; archiving/deletion outcome (see below) does not affect it.
+Exit code is `1` if any processed experiment is `FAILURE` or `NONEXISTENT`, and `0` otherwise, so skipped experiments do not fail a run. The archiving/deletion outcome (see below) does not affect it.
+
+## Repeated experiments in the CSV
+
+An experiment is identified by its `PROJECT`, `SUBJECT_LABEL` and `EXPERIMENT_LABEL`. Before anything downloads, `--csv` mode prints one `WARNING` per problem and skips every affected row:
+
+- **`DUPLICATE`:** the experiment appears on more than one row with the same `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` values (after the `sub-`/`ses-` prefix is added, so `01` and `sub-01` are the same). Delete the extra rows.
+- **`RENAME_CONFLICT`:** the experiment appears on more than one row with different rename values, including blank vs. filled. Keep one row.
+- **`COLLISION`:** different experiments would download into the same `PROJECT/SUBJECT/EXPERIMENT` directory, compared case-insensitively. Give each a unique rename.
+
+Fix the CSV and re-run; experiments that already downloaded are `SKIPPED`.
 
 ## Archiving and deletion (`-a`/`--archive`, `-d`/`--delete`)
 
-With `-a/--archive`, each experiment's directory is tar+gzipped regardless of its download STATUS, and one of these is printed:
+With `-a/--archive`, each downloaded experiment's directory is tar+gzipped regardless of its download STATUS, and one of these is printed. Experiments skipped before downloading (`SKIPPED`, `DUPLICATE`, `RENAME_CONFLICT`, `COLLISION`) are neither archived nor deleted, and the run summary repeats a `WARNING` with the number of `SKIPPED` ones.
 
 | Archive STATUS | Meaning |
 | --- | --- |
-| `COMPLETE` | The tarball was written successfully. |
-| `SKIPPED` | An archive already exists at that path; it is left untouched. |
+| `COMPLETE` | The tarball was written successfully. With `--overwrite`, this includes replacing an existing archive after a `COMPLETE` download. |
+| `SKIPPED` | An archive already exists at that path and was not replaced; it is left untouched. |
 | `FAILURE` | An error occurred while writing the tarball. |
 | `NONEXISTENT` | `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` does not exist (e.g., the download itself failed). |
 
@@ -94,4 +111,4 @@ When `-l/--log` is supplied, a CSV is written at `OUTPUT_DIR/log/download_<YYYYM
 DATESTAMP,USER,PROJECT,SUBJECT,EXPERIMENT,STATUS
 ```
 
-`DATESTAMP` is the per-experiment download attempt begin time, formatted to match Python's `logging` module default `asctime` (`YYYY-MM-DD HH:MM:SS,mmm`, local time). `USER` is the OS-level username running the command (via Python's `getpass.getuser()`). `SUBJECT`/`EXPERIMENT` reflect any rename override (`SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` in `--csv` mode, `--rename-subject`/`--rename-experiment` in `-1`/`--accession` mode — see [Manual Interventions](../manual.md)), i.e. the on-disk directory names actually written under `OUTPUT_DIR` (for `--accession` without a rename, this is the resolved XNAT ID, not a label), not necessarily the original XNAT labels. One row is appended per processed experiment; rows are written under a lock so concurrent workers do not interleave.
+`DATESTAMP` is the per-experiment download attempt begin time, formatted to match Python's `logging` module default `asctime` (`YYYY-MM-DD HH:MM:SS,mmm`, local time). `USER` is the OS-level username running the command (via Python's `getpass.getuser()`). `SUBJECT`/`EXPERIMENT` reflect any rename override (`SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` in `--csv` mode, `--rename-subject`/`--rename-experiment` in `-1`/`--accession` mode — see [Manual Interventions](../manual.md)), i.e. the on-disk directory names actually written under `OUTPUT_DIR` (for `--accession` without a rename, this is the resolved XNAT ID, not a label), not necessarily the original XNAT labels. One row is appended per processed experiment, including skipped ones (one row per CSV row for `DUPLICATE`, `RENAME_CONFLICT` and `COLLISION`); rows are written under a lock so concurrent workers do not interleave.

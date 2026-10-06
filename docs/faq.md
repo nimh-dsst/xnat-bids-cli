@@ -69,6 +69,14 @@ Click a question to expand its answer, or use the buttons below to open or close
 
     - [`xnatbidscli download`](cli/download.md)
 
+??? question "What happens if I re-run download on experiments I already downloaded?"
+
+    An experiment whose `OUTPUT_DIR/PROJECT/SUBJECT/EXPERIMENT` directory exists and is not empty is skipped with a `WARNING` and reported `SKIPPED`. It is not downloaded, archived or deleted. To download it again, pass `--overwrite`, which deletes the directory first and, with `-a`, replaces its archive once the download is `COMPLETE`. Because `-a -d` removes the directory, a re-run after it downloads again. In `--csv` mode, an experiment listed on more than one row, or two experiments renamed into the same directory, are skipped with a `WARNING` too (`DUPLICATE`, `RENAME_CONFLICT`, `COLLISION`). None of these skips change the exit code.
+
+    **References:**
+
+    - [`xnatbidscli download` — repeated experiments](cli/download.md#repeated-experiments-in-the-csv)
+
 ??? question "How do I archive downloaded data?"
 
     Pass `-a`/`--archive` to `download` (or `mriconvert`) to tar+gzip each experiment's directory into `OUTPUT_DIR/archive/PROJECT-<P>_SUBJECT-<S>_EXPERIMENT-<E>.tar.gz` once it's processed; add `-d`/`--delete` to remove the original directory after the archive is confirmed written.
