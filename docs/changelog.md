@@ -7,14 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-28
+
+`physioconvert` now works on every supported Python version, using the new `phys2bids` 2.11 release. `download` no longer downloads over an experiment that is already on disk, and has a new `--overwrite` flag.
+
 ### Added
 
 - `download --overwrite` deletes an experiment's existing directory and downloads it again. With `-a/--archive`, it also replaces an existing archive after a `COMPLETE` download.
 - `download --csv` skips with a `WARNING` every row of an experiment listed more than once (`DUPLICATE`, or `RENAME_CONFLICT` when its `SUBJECT_BIDS_RENAME`/`EXPERIMENT_BIDS_RENAME` values differ), and every experiment that would download into the same directory as another (`COLLISION`).
+- `pymatreader` is now installed with `xnatbidscli`, so `physioconvert` can read MATLAB `.mat` files without an extra install.
 
 ### Changed
 
 - `download` skips an experiment whose directory already exists and is not empty, with a `WARNING` and a new `SKIPPED` status, instead of downloading over it. `-a/--archive` and `-d/--delete` are not run for it, with a louder `WARNING`. Skipped experiments do not change the exit code.
+- `physioconvert` works on every supported Python version (3.11 and newer), not just 3.11. `xnatbidscli` now requires `phys2bids` 2.11 or newer, which no longer caps `numpy` below 1.24. `phys2bids` and `bioread` install on every Python version, and the `numpy<2` and `nibabel<5.4` pins are removed.
+
+### Fixed
+
+- The `READER_MISSING` hint for `.mat` files now names `pymatreader`, the package `phys2bids` actually uses, instead of `scipy`.
 
 ## [2.0.0] - 2026-09-28
 
@@ -67,6 +77,7 @@ First release.
 - `xnatcli` subcommands: `login`, `query`, `download`, `mriconfig`, `mriconvert`, `physioconvert`, `bidsmap` and `cubids`.
 - A documentation site built with Zensical and hosted on Read the Docs.
 
-[Unreleased]: https://github.com/nimh-dsst/xnat-bids-cli/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/nimh-dsst/xnat-bids-cli/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/nimh-dsst/xnat-bids-cli/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/nimh-dsst/xnat-bids-cli/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/nimh-dsst/xnat-bids-cli/releases/tag/v1.0.0

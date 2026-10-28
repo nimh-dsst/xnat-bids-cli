@@ -25,7 +25,7 @@ Click a question to expand its answer, or use the buttons below to open or close
 
 ??? question "Why does physioconvert say phys2bids is required?"
 
-    `phys2bids` installs with `xnatbidscli` only on Python 3.11. Its latest release (2.10.0) caps `numpy` below 1.24, and that `numpy` has no builds for Python 3.12 or newer. On 3.12 or newer, every other subcommand works, but `physioconvert` exits with this message. To convert physio, install `xnatbidscli` under Python 3.11. This limit goes away once `phys2bids` makes a new release.
+    `phys2bids` could not be imported in your environment. Since `xnatbidscli` 2.1.0, `phys2bids` installs with `xnatbidscli` on every supported Python version. Older releases installed it only on Python 3.11. Upgrade with `pip install --upgrade xnatbidscli`.
 
     **References:**
 

@@ -54,7 +54,7 @@ STATUS_SKIPPED = "SKIPPED"
 # is an environment problem, not a sign the file is not physiological data.
 _READER_PACKAGES = {
     ".acq": "bioread",
-    ".mat": "scipy",
+    ".mat": "pymatreader",
     ".smr": "sonpy",
 }
 
@@ -607,9 +607,8 @@ def physioconvert_cmd(args: argparse.Namespace) -> int:
         from phys2bids.phys2bids import phys2bids as _p2b  # noqa: F401
     except ImportError:
         sys.exit(
-            "Error: phys2bids is required for physioconvert. It installs with "
-            "xnatbidscli on Python 3.11 only until phys2bids releases support for "
-            "newer numpy; reinstall xnatbidscli under Python 3.11."
+            "Error: phys2bids is required for physioconvert. "
+            "Reinstall xnatbidscli with 'pip install --upgrade xnatbidscli'."
         )
 
     # physioconvert only reads mriconvert_qc.tsv -- it never writes it back.

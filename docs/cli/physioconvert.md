@@ -33,7 +33,7 @@ With `-n/--nphysio` > 1, the `phys2bids` conversions run in parallel across sepa
 | `CONVERTED` | `phys2bids` read the raw file and its `_physio.tsv.gz`/`.json` were written next to the paired `.nii.gz`. |
 | `SKIPPED` | The expected single-frequency `_physio.tsv.gz` already existed at its destination and was a valid, non-corrupt GZIP file; conversion was not attempted. |
 | `NOT_PHYSIO` | The referenced file matched a supported extension but could not be loaded as physiological data. |
-| `READER_MISSING` | The optional reader package `phys2bids` needs for this format is not installed (e.g. `bioread` for `.acq`, `scipy` for `.mat`, `sonpy` for `.smr`). This is an environment problem, not a data problem — install the package and re-run. |
+| `READER_MISSING` | The optional reader package `phys2bids` needs for this format is not installed (e.g. `bioread` for `.acq`, `pymatreader` for `.mat`, `sonpy` for `.smr`). This is an environment problem, not a data problem — install the package and re-run. |
 | `CONVERT_ERROR` | `phys2bids` raised while converting, produced no `.tsv.gz` output, or its destination was already occupied by a different association. |
 | `SOURCE_MISSING` | `PhysioParent` was unset/not a directory, the named basename was not found under it, or the `mriconvert_qc.tsv` row is missing `participant_id`/`datatype`. |
 | `COLLISION` | This `physio` basename is referenced by more than one `mriconvert_qc.tsv` row; none were converted until resolved. |
@@ -46,5 +46,3 @@ Exit code is `1` if any association is `CONVERT_ERROR` or `READER_MISSING`, and 
 | `-p`, `--project` | **Required.** Project directory name under `OUTPUT_DIR` identifying the BIDS dataset produced by `xnatbidscli mriconvert`. |
 | `-n`, `--nphysio` | *Optional.* Number of physio conversions to run in parallel, one `phys2bids` conversion per process (default `1`). |
 | `-l`, `--log` | *Optional.* Write a per-association log CSV to `OUTPUT_DIR/log/physioconvert_<YYYYMMDD_HHMMSS>_log.csv` (header `DATESTAMP,USER,STATUS,MRI_FILENAME,PHYSIO_SOURCE,DESTINATION_PATH`). One row per processed association, except a conversion that produced several outputs emits one row per output; associations with no output get a single blank-`DESTINATION_PATH` row. Also mirrors everything printed to stdout/stderr into a companion text log at `OUTPUT_DIR/log/physioconvert_<YYYYMMDD_HHMMSS>_log.txt`, the Python equivalent of piping through `tee`. Off by default. |
-
-> **Note:** `physioconvert` needs Python 3.11. `phys2bids` 2.10.0, its latest release, caps `numpy` at `<1.24`, and `numpy` 1.23 has no builds for Python 3.12 or newer. So `phys2bids` (and `bioread`) install with `xnatbidscli` only on Python 3.11, where `nibabel` is held below 5.4. On Python 3.12 or newer, every other subcommand works and `physioconvert` exits with a message. This limit goes away once `phys2bids` releases its uncapped `master` branch.
